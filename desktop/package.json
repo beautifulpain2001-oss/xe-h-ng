@@ -1,0 +1,21 @@
+{
+  "name": "ke-hoach-giao-hang",
+  "productName": "Ke Hoach Giao Hang",
+  "version": "1.0.0",
+  "description": "Kế hoạch giao hàng, giả lập chuyến và xếp ống giấy lên xe (chạy offline)",
+  "main": "main.js",
+  "author": "xe-h-ng",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "electron": "33.2.0",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "vn.xehang.kehoachgiaohang",
+    "productName": "Ke Hoach Giao Hang",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "index.html", "package.json"],
+    "win": { "target": [{ "target": "portable", "arch": ["x64"] }], "signAndEditExecutable": false },
+    "portable": { "artifactName": "KeHoachGiaoHang.exe" }
+  }
+}

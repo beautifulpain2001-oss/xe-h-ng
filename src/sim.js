@@ -450,7 +450,7 @@ const simTruck = t => vehById(t.truckId) || (SIM.sample ? { name: 'Xe mẫu (ch�
 /* ---------- Nhập liệu ---------- */
 function simSet(f, v) {
   const c = simCfg();
-  if (f === 'date') { SIM.date = v; SIM.res = null; SIM.hist = []; }
+  if (f === 'date') { SIM.date = v; SIM.res = null; SIM.hist = []; SIM.test = null; }
   else if (f === 'obj') SIM.objective = v;
   else if (f === 'trips') c.trips = Number(v) || 1;
   else if (f === 'depot') c.depot = v;

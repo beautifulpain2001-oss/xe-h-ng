@@ -77,3 +77,10 @@ Các giới hạn của heuristic (không đảm bảo tối ưu tuyệt đối)
 - Khoảng cách là ước tính (nhập tay, tọa độ chim bay × hệ số đường, cùng khu vực 5 km, còn lại 60 km), không dùng bản đồ đường thực, không tính giờ giao, cửa sổ thời gian, tải/dỡ hàng hay giới hạn giờ lái.
 - Sản phẩm tạo từ Excel chỉ là gợi ý từ tên hàng; cần kiểm tra quy cách đóng gói thật.
 - Khi xếp thật vẫn cần kiểm tra chằng buộc và an toàn.
+
+## Bản máy tính (.exe)
+
+- `desktop/` là vỏ Electron mở thẳng file đã tích hợp, không tải gì từ mạng (thư viện Excel và 3D nhúng sẵn trong file). `sh desktop/build-exe.sh <file-ke-hoach-goc.html>` dựng ra `desktop/dist/KeHoachGiaoHang.exe` (Windows, portable một file, khoảng 75 MB). Có thể dựng trên Linux/macOS, cần Node và mạng lần đầu để tải Electron.
+- Dữ liệu lưu trong thư mục `DuLieuKeHoach` nằm cạnh file .exe. Chuyển dữ liệu từ bản trình duyệt: "Lưu dữ liệu ra file (.json)" ở bản cũ, rồi "Mở file dữ liệu (.json)" ở bản .exe.
+- Tab "Xếp thử xe" là phần xếp một xe của ứng dụng xếp ống giấy (chọn khách trong ngày và/hoặc nhập hàng tay, xếp lên một xe, xem 3D).
+- Chỉ tính năng quét ảnh phiếu xuất kho (OCR) của file gốc vẫn cần mạng để tải bộ nhận dạng chữ.
