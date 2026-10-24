@@ -11,7 +11,8 @@ Lần đầu cần mạng để tải Three.js từ CDN (cdnjs, jsdelivr); phầ
 | `src/solver.js` | Bộ giải: quy đổi ống thành pallet/kiện/khối rời, xếp 3D lên một xe. Chạy trong Web Worker |
 | `src/planner.js` | Gom đơn thành chuyến: chọn xe, thứ tự giao, ràng buộc ghép/tách. Chạy trong Web Worker |
 | `src/importer.js` | Đọc bảng Excel/CSV: đoán cột, gom dòng thành đơn, đoán quy cách từ tên hàng |
-| `src/orders.js`, `src/trips.js` | Giao diện tab Đơn hàng và Kế hoạch chuyến |
+| `src/orders.js`, `src/trips.js` | Giao diện tab Đơn hàng và Kế hoạch chuyến (so sánh phương án, kéo thả) |
+| `src/plans.js` | Xuất Excel, xuất PDF (qua hộp thoại In), lưu / mở phiên JSON |
 | `src/view3d.js` | Lớp hiển thị 3D (Three.js, InstancedMesh cho từng ống) |
 | `src/app.js`, `style.css`, `template.html` | Giao diện |
 | `build.js` | Ghép `src/` thành `index.html`: `node build.js` |
@@ -37,6 +38,13 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Mục tiêu: ít xe / ngắn quãng đường / rẻ chi phí / ít điểm dừng.
 - Khoảng cách theo thứ tự ưu tiên: số km nhập tay giữa hai khu vực; tọa độ (đường chim bay × hệ số đường 1,3); cùng khu vực (5 km); còn lại 60 km. Tất cả đều là ước tính, thiếu địa chỉ/tọa độ thì việc gom theo vị trí kém chính xác.
 - Nhập Excel: sản phẩm chưa có trong danh sách được tạo tạm (hàng rời, xếp nằm, chồng tối đa 4 tầng) với nhãn "Tự tạo, cần kiểm tra"; kích thước chỉ là gợi ý từ tên hàng.
+
+## So sánh, chỉnh tay, xuất file (GĐ4)
+
+- "So sánh các mục tiêu" chạy lần lượt ít xe / ngắn quãng đường / (rẻ nếu đủ cước) / ít điểm dừng và đặt cạnh nhau; có thể lưu thêm phương án đã chỉnh tay (tối đa 6).
+- Kéo một điểm giao (cả điểm, không tách từng đơn) từ chuyến này sang chuyến khác hoặc vào ô "chuyến mới"; đổi loại xe từng chuyến. Hai chuyến liên quan được xếp lại 3D và sắp lại thứ tự giao ngay; có hoàn tác. Khối nào không lên được xe sẽ báo đỏ.
+- Excel (SheetJS): sheet Tổng hợp, Chuyến, Thứ tự chất hàng, Chưa xếp được. PDF: bấm "Xuất PDF / In", chọn "Lưu thành PDF" trong hộp thoại in (giữ đúng chữ Việt, có hình nhìn từ trên xuống của từng thùng).
+- Phiên: "Lưu phiên" ghi toàn bộ sản phẩm, xe, đơn, kế hoạch, phương án đã lưu vào file .json; "Mở phiên" nạp lại.
 
 ## Giới hạn
 

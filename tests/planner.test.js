@@ -156,5 +156,21 @@ test('khoảng cách: nhập tay ưu tiên hơn tọa độ; cùng khu vực kh�
   assert.ok(hn > 90 && hn < 120, 'HN-HP ' + hn);
 });
 
+test('dựng lại chuyến sau khi kéo thả: chuyển một điểm giao sang chuyến khác, không mất khối', () => {
+  const p = run(orders8, { objective: 'distance' });
+  assert.ok(p.trips.length >= 2, 'cần ít nhất 2 chuyến để thử');
+  const locs = {};
+  orders8.forEach((o) => { locs[o.loc.key] = o.loc; });
+  const a = p.trips[0], b = p.trips[1];
+  const moved = a.units.filter((u) => u.locKey === a.stops[0].locKey);
+  const restA = a.units.filter((u) => u.locKey !== a.stops[0].locKey);
+  const nb = Planner.buildTrip(b.units.concat(moved), b.vehicle, locs, LOC.depot, { gap: 0, roadFactor: 1.3 });
+  assert.strictEqual(nb.stops.length, b.stops.length + 1 - (b.stops.some((s) => s.locKey === a.stops[0].locKey) ? 1 : 0));
+  assert.strictEqual(nb.pack.placements.length + nb.pack.unplaced.length, b.units.length + moved.length);
+  if (restA.length) { const na = Planner.buildTrip(restA, a.vehicle, locs, LOC.depot, { gap: 0 }); assert.strictEqual(na.pack.placements.length + na.pack.unplaced.length, restA.length); }
+  const tt = Planner.totalsOf([nb]);
+  assert.strictEqual(tt.vehicles, 1);
+});
+
 console.log(report.join('\n'));
 console.log('\n' + passed + ' kiểm thử đạt' + (process.exitCode ? ', CÓ LỖI' : ''));
