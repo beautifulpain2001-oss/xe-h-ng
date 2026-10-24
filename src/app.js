@@ -10,10 +10,16 @@
     pct: function (x) { return nf(x, 1) + '%'; },
   };
 
-  /* ---------- Trạng thái và lưu trữ ---------- */
-  const state = { products: [], vehicles: [], settings: Model.defaultSettings(), vehId: null, scheme: 'code', detail: false, result: null, picked: null };
+  /* Cửa ngõ cho các tab khác (đơn hàng, kế hoạch chuyến) dùng chung trạng thái và tiện ích. */
+  const XEH = window.XEH = { tabs: {}, onInit: null };
 
-  function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify({ products: state.products, vehicles: state.vehicles, settings: state.settings })); } catch (e) { /* trình duyệt chặn lưu: bỏ qua */ } }
+  /* ---------- Trạng thái và lưu trữ ---------- */
+  const state = {
+    products: [], vehicles: [], settings: Model.defaultSettings(), vehId: null, scheme: 'code', detail: false, result: null, picked: null,
+    orders: [], depot: Model.defaultDepot(), constraints: [], plan: null, planOpts: { objective: 'vehicles', useVeh: {}, maxCount: {} },
+  };
+
+  function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify({ products: state.products, vehicles: state.vehicles, settings: state.settings, orders: state.orders, depot: state.depot, constraints: state.constraints, planOpts: state.planOpts })); } catch (e) { /* trình duyệt chặn lưu: bỏ qua */ } }
   function load() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
@@ -22,7 +28,11 @@
       state.products = (d.products || []).map(function (p) { return Model.newProduct(p); });
       state.vehicles = (d.vehicles || []).map(function (v) { return Model.newVehicle(v); });
       state.settings = Object.assign(Model.defaultSettings(), d.settings || {});
-      return state.products.length + state.vehicles.length > 0;
+      state.orders = (d.orders || []).map(function (o) { return Model.newOrder(o); });
+      state.depot = Object.assign(Model.defaultDepot(), d.depot || {});
+      state.constraints = d.constraints || [];
+      state.planOpts = Object.assign({ objective: 'vehicles', useVeh: {}, maxCount: {} }, d.planOpts || {});
+      return state.products.length + state.vehicles.length + state.orders.length > 0;
     } catch (e) { return false; }
   }
 
@@ -87,7 +97,7 @@
       const a = analyze(p);
       const i = a.info;
       const unitWord = p.packType === 'bundle' ? 'kiện' : p.packType === 'loose' ? 'khối' : 'pallet';
-      const status = a.errors.length ? el('span', { class: 'tag err' }, 'Lỗi') : a.warnings.length ? el('span', { class: 'tag warn' }, 'Cần xem') : el('span', { class: 'tag ok' }, 'Hợp lệ');
+      const status = a.errors.length ? el('span', { class: 'tag err' }, 'Lỗi') : p.auto ? el('span', { class: 'tag warn' }, 'Tự tạo, cần kiểm tra') : a.warnings.length ? el('span', { class: 'tag warn' }, 'Cần xem') : el('span', { class: 'tag ok' }, 'Hợp lệ');
       tbody.appendChild(el('tr', null,
         el('td', null, el('b', null, p.code || ''), el('div', { class: 'sub' }, p.name || '')),
         el('td', null, String(p.stop || '').trim() ? 'Điểm ' + p.stop : '–', el('div', { class: 'sub' }, p.customer || '')),
@@ -325,6 +335,8 @@
     toast('Đã nạp dữ liệu mẫu (số liệu minh họa).');
   }
 
+  XEH.state = state; XEH.el = el; XEH.$ = $; XEH.nf = nf; XEH.fmt = fmt; XEH.toast = toast; XEH.save = save; XEH.analyze = analyze; XEH.showTab = showTab; XEH.openResult = openResult;
+
   /* ---------- Tab 3: Xếp thử một xe ---------- */
   let view = null;
   let worker = null;
@@ -372,8 +384,10 @@
     renderResults();
     buildPlayer();
     buildFilters();
+    if (view && state.result && lastDrawn !== state.result) redraw();
   }
 
+  let lastDrawn = null;
   function buildPackBar() {
     const bar = $('packbar');
     bar.textContent = '';
@@ -449,6 +463,7 @@
   function redraw() {
     const R = state.result;
     if (!view || !R) return;
+    lastDrawn = R;
     const legend = view.setScene({ vehicle: R.veh, placements: R.r.placements, unitsById: R.byId, scheme: state.scheme, detail: state.detail, cog: R.r.metrics.cog, freeLength: R.r.metrics.freeLength });
     view.setView('iso');
     view.setClip(vs.clipX, vs.clipY);
@@ -608,7 +623,7 @@
     }
     const m = R.r.metrics;
     const th = function (cols) { return el('thead', null, el('tr', null, cols.map(function (h) { return el('th', { text: h }); }))); };
-    host.appendChild(el('h3', null, 'Kết quả xếp: ' + R.vehName));
+    host.appendChild(el('h3', null, R.title || ('Kết quả xếp: ' + R.vehName)));
     host.appendChild(el('div', { class: 'cards' },
       card('Lấp đầy thể tích', fmt.pct(m.volumePct), nf(m.volumeM3, 2) + ' m³ hàng / ' + nf(R.veh.volume, 2) + ' m³ thùng'),
       card('Dùng tải trọng', fmt.pct(m.weightPct), fmt.kg(m.weightKg) + ' / ' + fmt.kg(R.veh.payload)),
@@ -681,6 +696,14 @@
     if (name === 'products') renderProducts();
     if (name === 'vehicles') renderVehicles();
     if (name === 'pack') renderPack();
+    if (XEH.tabs[name]) XEH.tabs[name]();
+  }
+
+  // Mở một kết quả xếp (ví dụ một chuyến trong kế hoạch) trong tab xem 3D.
+  function openResult(res) {
+    state.result = res; state.picked = null;
+    vs.anim = null; vs.hiddenCust.clear(); vs.hiddenStop.clear();
+    showTab('pack');
   }
 
   function init() {
@@ -688,6 +711,7 @@
     document.querySelectorAll('.tabbtn').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
     showTab('products');
     window.__xeh = { state: state, showTab: showTab, doPack: doPack, loadSample: loadSample };
+    if (XEH.onInit) XEH.onInit();
   }
   window.addEventListener('DOMContentLoaded', init);
 })();

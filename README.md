@@ -9,10 +9,13 @@ Lần đầu cần mạng để tải Three.js từ CDN (cdnjs, jsdelivr); phầ
 | --- | --- |
 | `src/model.js` | Mô hình dữ liệu, đổi đơn vị, kiểm tra dữ liệu nhập (thông báo tiếng Việt) |
 | `src/solver.js` | Bộ giải: quy đổi ống thành pallet/kiện/khối rời, xếp 3D lên một xe. Chạy trong Web Worker |
+| `src/planner.js` | Gom đơn thành chuyến: chọn xe, thứ tự giao, ràng buộc ghép/tách. Chạy trong Web Worker |
+| `src/importer.js` | Đọc bảng Excel/CSV: đoán cột, gom dòng thành đơn, đoán quy cách từ tên hàng |
+| `src/orders.js`, `src/trips.js` | Giao diện tab Đơn hàng và Kế hoạch chuyến |
 | `src/view3d.js` | Lớp hiển thị 3D (Three.js, InstancedMesh cho từng ống) |
 | `src/app.js`, `style.css`, `template.html` | Giao diện |
 | `build.js` | Ghép `src/` thành `index.html`: `node build.js` |
-| `tests/solver.test.js` | Kiểm thử bộ giải: `node tests/solver.test.js` |
+| `tests/*.test.js` | Kiểm thử bộ giải, bộ gom đơn, nhập Excel: `node tests/planner.test.js` ... |
 
 Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.html`.
 
@@ -26,6 +29,14 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Ràng buộc ưu tiên cao: thứ tự dỡ hàng (điểm giao sau xếp sát đầu thùng, điểm giao đầu gần cửa; không để hàng giao sau chặn phía sau hoặc đè lên hàng giao trước) và không đặt khối nặng hơn 1,2 lần lên khối nhẹ. Chỉ nới khi không còn cách xếp nào, và khi nới luôn có cảnh báo đỏ.
 - Trọng tâm: cảnh báo khi lệch ngang quá 10% chiều rộng hoặc lệch dọc quá 15% chiều dài thùng.
 - Khoảng trống còn lại: thử xếp thêm bản sao của từng loại khối vào chỗ trống để ước tính còn chứa thêm bao nhiêu.
+
+## Gom đơn thành chuyến (GĐ3)
+
+- Đơn quá lớn cho xe lớn nhất được tách thành nhiều xe. Ràng buộc "đi chung" gộp đơn thành một khối; "tách", "xe riêng", "giao đầu tiên" được tôn trọng.
+- Gom bằng thuật toán tiết kiệm (Clarke-Wright) với ước lượng độ đầy 92%, rồi chọn xe thật bằng cách xếp 3D thử, tách bớt đơn khi không vừa, và cải thiện cục bộ (chuyển đơn, nối chuyến) trong ngân sách thời gian. Thứ tự giao: gần nhất + 2-opt.
+- Mục tiêu: ít xe / ngắn quãng đường / rẻ chi phí / ít điểm dừng.
+- Khoảng cách theo thứ tự ưu tiên: số km nhập tay giữa hai khu vực; tọa độ (đường chim bay × hệ số đường 1,3); cùng khu vực (5 km); còn lại 60 km. Tất cả đều là ước tính, thiếu địa chỉ/tọa độ thì việc gom theo vị trí kém chính xác.
+- Nhập Excel: sản phẩm chưa có trong danh sách được tạo tạm (hàng rời, xếp nằm, chồng tối đa 4 tầng) với nhãn "Tự tạo, cần kiểm tra"; kích thước chỉ là gợi ý từ tên hàng.
 
 ## Giới hạn
 

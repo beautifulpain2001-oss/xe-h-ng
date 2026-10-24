@@ -71,3 +71,18 @@ h3,h4{margin:12px 0 6px}
 .cogbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px}
 .lg i.free{background:#2ca02c55}
 tr.relaxed td{background:#fff3e0}
+/* GĐ3: đơn hàng và kế hoạch chuyến */
+.tall2{max-height:420px;overflow:auto}
+.notesbox,.depot{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0}
+.notesbox summary,.depot summary{cursor:pointer;font-weight:600}
+.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin:8px 0}
+label.inline{display:inline-flex;gap:6px;align-items:center}
+.mapbox{height:300px;border:1px solid var(--line);border-radius:8px;margin:8px 0}
+.cpanel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0}
+.cpanel h3{margin:4px 0 8px}
+.cards4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:800px){.cards4{grid-template-columns:repeat(2,1fr)}}
+.card .big{font-size:20px;font-weight:700}
+.trip{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:12px 0}
+.trip h3{margin:4px 0}
+progress{width:260px}
