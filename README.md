@@ -46,6 +46,17 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Excel (SheetJS): sheet Tổng hợp, Chuyến, Thứ tự chất hàng, Chưa xếp được. PDF: bấm "Xuất PDF / In", chọn "Lưu thành PDF" trong hộp thoại in (giữ đúng chữ Việt, có hình nhìn từ trên xuống của từng thùng).
 - Phiên: "Lưu phiên" ghi toàn bộ sản phẩm, xe, đơn, kế hoạch, phương án đã lưu vào file .json; "Mở phiên" nạp lại.
 
+## Hiệu năng (đo bằng Node, một luồng; trình duyệt tương đương)
+
+- Xếp một xe: 300 khối trộn dưới 5 giây.
+- Gom đơn: 28 đơn / 308 khối khoảng 2 giây; 56 đơn / 616 khối khoảng 6 giây; 112 đơn / 1.232 khối khoảng 10 giây (ngân sách tính 8 giây, bước xếp lại kỹ cuối cùng nằm ngoài ngân sách). Tính trong Web Worker nên giao diện không đứng; có nút dừng và lấy phương án tạm tốt nhất.
+
 ## Giới hạn
 
-Kết quả là phương án gợi ý theo heuristic, không đảm bảo tối ưu tuyệt đối. Lồng ống nhỏ vào ống lớn chưa được tính. Khi xếp thật vẫn cần kiểm tra chằng buộc và an toàn.
+Các giới hạn của heuristic (không đảm bảo tối ưu tuyệt đối):
+
+- Xếp 3D dùng extreme points, không giải bài toán tối ưu chính xác; kết quả có thể kém phương án sắp tay giỏi vài phần trăm. Không lật khối, chỉ xoay ngang; chưa tính lồng ống nhỏ vào ống lớn; "chồng tầng" dựa trên số tầng và tải chịu nén anh nhập.
+- Gom đơn theo tiết kiệm + cải thiện cục bộ, không đảm bảo ít xe nhất. Đơn của một khách được tách thành nhiều xe nếu quá lớn; kéo thả chuyển nguyên điểm giao.
+- Khoảng cách là ước tính (nhập tay, tọa độ chim bay × hệ số đường, cùng khu vực 5 km, còn lại 60 km), không dùng bản đồ đường thực, không tính giờ giao, cửa sổ thời gian, tải/dỡ hàng hay giới hạn giờ lái.
+- Sản phẩm tạo từ Excel chỉ là gợi ý từ tên hàng; cần kiểm tra quy cách đóng gói thật.
+- Khi xếp thật vẫn cần kiểm tra chằng buộc và an toàn.
