@@ -34,14 +34,14 @@ test('(a) số ống mỗi lớp trên pallet khớp tính tay (120, lưới vu�
   assert.strictEqual(a.units[0].h, 150 + 1000);
   assert.strictEqual(a.units[0].weight, 120 * 1 + 20);
 });
-test('(a) xe 6200x2350: xếp được 10 đến 12 pallet 1200x1000 (cận trên theo diện tích là 12)', () => {
+test('(a) xe 6200x2350: xếp được 11 pallet 1200x1000, bằng cách chia dải tính tay (cận trên diện tích 12)', () => {
   const p = prod({ code: 'A', size: 50, L: 1000, qty: 2400, perUnit: 120 }); // 20 pallet, cao 1150, không chồng
   const { r } = pack([p], truck({ payload: 100000 }));
   // Cận trên theo diện tích: floor(6200*2350 / (1200*1000)) = 12. Cách chia dải 1200 x 6 + 1000 x 5 cho 11.
-  assert.ok(r.placements.length >= 10, 'xếp được ' + r.placements.length);
+  assert.ok(r.placements.length >= 11, 'xếp được ' + r.placements.length);
   assert.ok(r.placements.length <= 12);
   assert.strictEqual(r.unplaced.length, 20 - r.placements.length);
-  report.push('         (a) pallet đồng nhất: xếp được ' + r.placements.length + '/20, cận trên tính tay 12, chia dải 1200x6 + 1000x5 cho 11, giải thuật hiện tại chưa tìm ra, cải thiện ở GĐ2');
+  report.push('         (a) pallet đồng nhất: xếp được ' + r.placements.length + '/20, cận trên tính tay 12, chia dải 1200x6 + 1000x5 cho 11');
 });
 test('(a) chồng 2 tầng khi cho phép: ~gấp đôi số pallet (cao 1150 x2 = 2300 <= 2400)', () => {
   const p = prod({ code: 'A', size: 50, L: 1000, qty: 2400, perUnit: 120, stackable: true, maxTiers: 2 });
@@ -116,6 +116,58 @@ test('tọa độ từng ống nằm trong khối bao', () => {
     assert.ok(pos[i * 3 + 1] - 50 >= -1e-6 && pos[i * 3 + 1] + 50 <= u.w + 1e-6);
     assert.ok(pos[i * 3 + 2] + 500 <= u.h + 1e-6);
   }
+});
+
+// GĐ2: thứ tự dỡ hàng, tải chịu nén, hàng nặng trên hàng nhẹ, ước tính chỗ trống.
+test('thứ tự dỡ: điểm giao sau nằm sát đầu thùng, không vi phạm', () => {
+  const ps = [1, 2, 3].map((s) => prod({ code: 'S' + s, customer: 'K' + s, stop: s, size: 50, L: 1000, qty: 360, perUnit: 120 }));
+  const { r, units } = pack(ps, truck({ payload: 100000 }));
+  assert.strictEqual(r.placements.length, 9);
+  assert.strictEqual(r.metrics.unloadViolations.length, 0, JSON.stringify(r.metrics.unloadViolations));
+  const byId = {}; units.forEach((u) => (byId[u.id] = u));
+  const maxX = (s) => Math.max(...r.placements.filter((p) => byId[p.uid].stop === s).map((p) => p.x));
+  const minX = (s) => Math.min(...r.placements.filter((p) => byId[p.uid].stop === s).map((p) => p.x));
+  assert.ok(maxX(3) <= minX(2) && maxX(2) <= minX(1), 'điểm 3 phải ở đầu thùng, điểm 1 gần cửa');
+  assert.strictEqual(byId[r.loadOrder[0]].stop, 3);
+});
+test('thứ tự dỡ: không còn cách xếp đúng thì vẫn xếp nhưng cảnh báo rõ', () => {
+  // Thùng vừa 1 pallet, X2 không cho chồng lên: X1 (giao đầu) buộc phải nằm dưới X2 (giao sau).
+  const a = prod({ code: 'X1', stop: 1, size: 50, L: 1000, qty: 120, perUnit: 120, stackable: true, maxTiers: 2, kg: 2 });
+  const b = prod({ code: 'X2', stop: 2, size: 50, L: 1000, qty: 120, perUnit: 120, stackable: false, kg: 1 });
+  const { r } = pack([a, b], truck({ L: 1200, W: 1000, H: 2400, payload: 10000 }));
+  assert.strictEqual(r.placements.length, 2);
+  assert.ok(r.warnings.some((w) => /thứ tự dỡ/.test(w)), r.warnings.join('|'));
+});
+test('tải chịu nén: khối chỉ chịu 100 kg thì không bị chồng khối 140 kg', () => {
+  const p = prod({ code: 'N', size: 50, L: 1000, qty: 240, perUnit: 120, stackable: true, maxTiers: 2, maxLoad: 100 });
+  const { r } = pack([p], truck({ L: 1200, W: 1000, H: 2400, payload: 10000 }));
+  assert.strictEqual(r.placements.length, 1);
+});
+test('không đặt hàng nặng lên hàng nhẹ khi còn chỗ khác', () => {
+  const light = prod({ code: 'L', size: 50, L: 1000, qty: 120, perUnit: 120, stackable: true, maxTiers: 2, kg: 0.5, maxLoad: 5000 });
+  const heavy = prod({ code: 'H', size: 50, L: 1000, qty: 120, perUnit: 120, stackable: true, maxTiers: 2, kg: 5, maxLoad: 5000 });
+  const { r, units } = pack([light, heavy], truck({ payload: 100000 }));
+  const byId = {}; units.forEach((u) => (byId[u.id] = u));
+  const h = r.placements.find((x) => byId[x.uid].code === 'H');
+  assert.strictEqual(h.z, 0);
+});
+test('ước tính chỗ trống: xe 6200 chở 4 pallet thì báo còn chứa thêm ít nhất 6 pallet cùng loại', () => {
+  const p = prod({ code: 'E', size: 50, L: 1000, qty: 480, perUnit: 120 });
+  const { r } = pack([p], truck({ payload: 100000 }));
+  const e = r.extra.find((x) => x.code === 'E');
+  assert.ok(e && e.count >= 6, JSON.stringify(r.extra));
+  report.push('         chỗ trống: sau 4 pallet còn thêm được ' + e.count + ' pallet (tổng ' + (4 + e.count) + ')');
+});
+test('tốc độ: 300 khối trộn xếp dưới 5 giây (Node, một luồng)', () => {
+  const ps = [
+    prod({ code: 'P1', size: 38, L: 1200, qty: 200 * 40, perUnit: 200, stackable: true, maxTiers: 2 }),
+    prod({ code: 'P2', size: 101.75, L: 185, qty: 20 * 260, packType: 'bundle', perUnit: 20, bunL: 600, bunW: 420, bunH: 400, bunKg: 1, stackable: true, maxTiers: 4 }),
+  ];
+  const t = Date.now();
+  const { r } = pack(ps, truck({ L: 12032, W: 2352, H: 2393, payload: 26000 }));
+  const ms = Date.now() - t;
+  report.push('         tốc độ: 300 khối, ' + ms + ' ms, lên xe ' + r.placements.length);
+  assert.ok(ms < 5000, ms + ' ms');
 });
 
 console.log(report.join('\n'));

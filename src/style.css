@@ -62,3 +62,12 @@ h3,h4{margin:12px 0 6px}
 #toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#12324f;color:#fff;padding:8px 16px;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .2s}
 #toast.show{opacity:1}
 @media (max-width:900px){.packmain{grid-template-columns:1fr}.canvas{height:340px}main{padding:10px}}
+.player{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.player button.on{background:#12324f;color:#fff;border-color:#12324f}
+.animlabel{position:absolute;left:8px;right:8px;top:8px;background:#ffffffe6;border:1px solid var(--line);border-radius:6px;padding:6px 10px;font-size:13px;z-index:2}
+.filters{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+.fgroup{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:13px}
+.slider input{width:110px;vertical-align:middle}
+.cogbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px}
+.lg i.free{background:#2ca02c55}
+tr.relaxed td{background:#fff3e0}

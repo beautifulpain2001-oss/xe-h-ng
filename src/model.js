@@ -34,7 +34,7 @@ const Model = (function () {
       id: uid('p'), code: '', name: '', customer: '', qty: '',
       unit: 'mm', L: '', sizeMode: 'radius', size: '',
       weightMode: 'thickness', T: '', kg: '',
-      orient: 'stand', stackable: false, maxTiers: 2, nestable: false,
+      orient: 'stand', stackable: false, maxTiers: 2, maxLoad: 500, nestable: false, stop: '',
       packType: 'pallet', perUnit: '',
       palL: 1200, palW: 1000, palH: 150, palKg: 20, maxH: 1800,
       bunL: '', bunW: '', bunH: '', bunKg: 0,
@@ -106,6 +106,16 @@ const Model = (function () {
     n.stackable = !!p.stackable;
     n.maxTiers = n.stackable ? Math.floor(num(p.maxTiers)) : 1;
     if (n.stackable && !(n.maxTiers >= 2)) errors.push('Số tầng chồng tối đa phải là số nguyên từ 2 trở lên (hoặc bỏ chọn "cho phép xếp chồng").');
+    n.maxLoad = 0;
+    if (n.stackable) {
+      n.maxLoad = num(p.maxLoad);
+      if (!(n.maxLoad > 0)) errors.push('Tải chịu nén tối đa (kg đè lên trên mỗi khối) phải lớn hơn 0.');
+    }
+    n.stop = null;
+    if (p.stop !== undefined && String(p.stop).trim() !== '') {
+      n.stop = num(p.stop);
+      if (!(n.stop >= 1) || Math.floor(n.stop) !== n.stop) { errors.push('Thứ tự điểm giao phải là số nguyên từ 1 trở lên (1 = giao đầu tiên), hoặc để trống.'); n.stop = null; }
+    }
     n.nestable = !!p.nestable;
     if (n.nestable) warnings.push('Tính năng lồng ống sẽ có ở giai đoạn 2; hiện tại hệ thống chưa lồng ống khi tính.');
 

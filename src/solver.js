@@ -142,7 +142,7 @@ const Solver = (function () {
       return {
         id: p.id + '#' + idx, pid: p.id, code: p.code, name: p.name, customer: p.customer,
         kind: p.packType, partial: partial, tubes: tubes, l: l, w: w, h: h, weight: weight,
-        stackable: p.stackable, maxTiers: p.maxTiers, detail: detail,
+        stackable: p.stackable, maxTiers: p.maxTiers, maxLoad: p.maxLoad, stop: p.stop, detail: detail,
       };
     };
     let cap, units = [];
@@ -204,67 +204,164 @@ const Solver = (function () {
 
   /* ---------- Xếp nhiều khối vào MỘT xe ----------
    * Thuật toán: extreme points (điểm cực). Mỗi khối thử tại mọi điểm cực với 2 hướng xoay ngang (không lật),
-   * chọn vị trí thấp nhất rồi gần đầu thùng nhất. Thử nhiều thứ tự sắp xếp, giữ kết quả tốt nhất. */
+   * chọn vị trí theo hàm điểm (thấp nhất, rồi gần đầu thùng / gần thành trái). Chạy nhiều cấu hình
+   * (thứ tự sắp xếp × ưu tiên hướng xoay × hàm điểm), giữ phương án tốt nhất.
+   * Ràng buộc cứng: trong thùng, không chồng lấn, tổng tải, số tầng, chỗ đỡ ≥ 80%, tải chịu nén.
+   * Ràng buộc ưu tiên (chỉ nới khi không còn cách): thứ tự dỡ hàng theo điểm giao, không đặt hàng nặng lên hàng nhẹ. */
 
-  function runOrder(order, V, payload, gap) {
-    const placed = [];
+  const SUPPORT_MIN = 0.8;
+  const HEAVY_ON_LIGHT = 1.2; // không đặt khối nặng hơn 1,2 lần khối đỡ nó
+
+  function hasStop(u) { return typeof u.stop === 'number' && isFinite(u.stop); }
+
+  // Kiểm tra cặp khối có vi phạm thứ tự dỡ không. a và b là hộp {x,y,z,gl,gw,h,u}.
+  // b chặn a khi b nằm phía cửa sau của a (cùng dải ngang và dải cao) hoặc b nằm đè lên a.
+  function blocksIllegally(a, b) {
+    if (!hasStop(a.u) || !hasStop(b.u) || a.u.stop === b.u.stop) return false;
+    const oy = Math.min(a.y + a.gw, b.y + b.gw) - Math.max(a.y, b.y) > EPS;
+    if (!oy) return false;
+    const oz = Math.min(a.z + a.h, b.z + b.h) - Math.max(a.z, b.z) > EPS;
+    const ox = Math.min(a.x + a.gl, b.x + b.gl) - Math.max(a.x, b.x) > EPS;
+    // b phía sau a (gần cửa hơn), chặn đường lấy a ra
+    if (oz && b.x >= a.x + a.gl - EPS && b.u.stop > a.u.stop) return true;
+    if (oz && a.x >= b.x + b.gl - EPS && a.u.stop > b.u.stop) return true;
+    // b đè lên a
+    if (ox && b.z >= a.z + a.h - EPS && b.u.stop > a.u.stop) return true;
+    if (ox && a.z >= b.z + b.h - EPS && a.u.stop > b.u.stop) return true;
+    return false;
+  }
+
+  function loadOk(box, w, seen) {
+    if (seen.has(box)) return true;
+    seen.add(box);
+    if (box.loadAbove + w > box.u.maxLoad + EPS) return false;
+    for (let i = 0; i < box.below.length; i++) if (!loadOk(box.below[i], w, seen)) return false;
+    return true;
+  }
+  function addLoad(box, w, seen) {
+    if (seen.has(box)) return;
+    seen.add(box);
+    box.loadAbove += w;
+    box.below.forEach(function (b) { addLoad(b, w, seen); });
+  }
+
+  function pointsFrom(boxes) {
+    const pts = [{ x: 0, y: 0, z: 0 }];
+    boxes.forEach(function (b) {
+      pts.push({ x: b.x + b.gl, y: b.y, z: b.z }, { x: b.x, y: b.y + b.gw, z: b.z }, { x: b.x, y: b.y, z: b.z + b.h });
+    });
+    return pts;
+  }
+
+  /* cfg = {gap, rotFirst (ưu tiên xoay 90° khi bằng điểm), score (0: thấp→đầu thùng→trái, 1: thấp→trái→đầu thùng),
+   *        init (các hộp đã đặt sẵn, dùng khi ước tính chỗ trống), relax (cho phép nới ràng buộc ưu tiên)} */
+  function runOrder(order, V, payload, cfg) {
+    const gap = cfg.gap || 0;
+    let placed = [];
+    if (cfg.init) {
+      const map = new Map();
+      placed = cfg.init.map(function (b) { const c = Object.assign({}, b, { below: [] }); map.set(b, c); return c; });
+      cfg.init.forEach(function (b) { map.get(b).below = b.below.map(function (x) { return map.get(x); }); });
+    }
     const unplaced = [];
-    let pts = [{ x: 0, y: 0, z: 0 }];
-    let wsum = 0;
-    order.forEach(function (u) {
-      if (wsum + u.weight > payload + EPS) { unplaced.push({ unit: u, reason: 'weight' }); return; }
-      let best = null;
-      for (let k = 0; k < pts.length; k++) {
-        const p = pts[k];
-        for (let r = 0; r < 2; r++) {
-          if (r === 1 && Math.abs(u.l - u.w) < EPS) break;
+    let pts = pointsFrom(placed);
+    let wsum = placed.reduce(function (s, b) { return s + b.u.weight; }, 0);
+    const rots = cfg.rotFirst ? [1, 0] : [0, 1];
+
+    // 0: lấp sàn trước (thấp → đầu thùng → ngang); 1: thấp → ngang → đầu thùng;
+    // 2: dựng tường từ đầu thùng ra cửa (đầu thùng → thấp → ngang), hợp với nhiều điểm giao và hàng chồng được.
+    const scoreOf = [
+      function (p) { return p.z * 1e9 + p.x * 1e4 + p.y; },
+      function (p) { return p.z * 1e9 + p.y * 1e4 + p.x; },
+      function (p) { return p.x * 1e9 + p.z * 1e4 + p.y; },
+    ][cfg.score || 0];
+
+    // Điểm số chỉ phụ thuộc vị trí, nên duyệt điểm cực theo điểm số tăng dần và dừng ở vị trí hợp lệ đầu tiên.
+    function find(u, strict) {
+      const sorted = pts.slice().sort(function (a, b) { return scoreOf(a) - scoreOf(b); });
+      for (let k = 0; k < sorted.length; k++) {
+        const p = sorted[k];
+        for (let ri = 0; ri < 2; ri++) {
+          const r = rots[ri];
+          if (r === 1 && Math.abs(u.l - u.w) < EPS) continue;
           const rl = r ? u.w : u.l, rw = r ? u.l : u.w;
           const gl = rl + gap, gw = rw + gap;
           if (p.x + gl > V.L + gap + EPS || p.y + gw > V.W + gap + EPS || p.z + u.h > V.H + EPS) continue;
-          let ok = true, support = 0, tier = 1, tierCap = u.stackable ? u.maxTiers : 99, supportOk = true;
+          const cand = { x: p.x, y: p.y, z: p.z, gl: gl, gw: gw, h: u.h, u: u };
+          let ok = true, support = 0, tier = 1, tierCap = u.stackable ? u.maxTiers : 99;
+          const sup = [];
           for (let i = 0; i < placed.length; i++) {
             const b = placed[i];
             const ox = Math.min(p.x + gl, b.x + b.gl) - Math.max(p.x, b.x);
-            if (ox <= EPS) continue;
             const oy = Math.min(p.y + gw, b.y + b.gw) - Math.max(p.y, b.y);
-            if (oy <= EPS) continue;
-            const oz = Math.min(p.z + u.h, b.z + b.h) - Math.max(p.z, b.z);
-            if (oz > EPS) { ok = false; break; }
-            if (Math.abs(b.z + b.h - p.z) < 0.5) {
-              support += ox * oy;
-              if (!b.u.stackable) supportOk = false;
-              tier = Math.max(tier, b.tier + 1);
-              tierCap = Math.min(tierCap, b.u.maxTiers);
+            if (ox > EPS && oy > EPS) {
+              const oz = Math.min(p.z + u.h, b.z + b.h) - Math.max(p.z, b.z);
+              if (oz > EPS) { ok = false; break; }
+              if (Math.abs(b.z + b.h - p.z) < 0.5) {
+                if (!b.u.stackable) { ok = false; break; }
+                support += ox * oy;
+                sup.push(b);
+                tier = Math.max(tier, b.tier + 1);
+                tierCap = Math.min(tierCap, b.u.maxTiers);
+                if (strict && u.weight > b.u.weight * HEAVY_ON_LIGHT + EPS) { ok = false; break; }
+              }
             }
+            if (strict && blocksIllegally(b, cand)) { ok = false; break; }
           }
           if (!ok) continue;
-          if (p.z > EPS && (!supportOk || support < 0.8 * gl * gw - EPS || tier > tierCap)) continue;
-          const score = p.z * 1e6 + p.x * 1e3 + p.y;
-          if (!best || score < best.score) best = { score: score, p: p, r: r, rl: rl, rw: rw, gl: gl, gw: gw, tier: tier };
+          if (p.z > EPS && (support < SUPPORT_MIN * gl * gw - EPS || tier > tierCap)) continue;
+          let loadFine = true;
+          for (let i = 0; i < sup.length && loadFine; i++) loadFine = loadOk(sup[i], u.weight, new Set());
+          if (!loadFine) continue;
+          return { p: p, r: r, rl: rl, rw: rw, gl: gl, gw: gw, tier: tier, sup: sup };
         }
       }
+      return null;
+    }
+
+    order.forEach(function (u) {
+      if (wsum + u.weight > payload + EPS) { unplaced.push({ unit: u, reason: 'weight' }); return; }
+      let best = find(u, true);
+      let relaxed = false;
+      if (!best && cfg.relax) { best = find(u, false); relaxed = !!best; }
       if (!best) { unplaced.push({ unit: u, reason: 'space' }); return; }
-      const box = { u: u, x: best.p.x, y: best.p.y, z: best.p.z, l: best.rl, w: best.rw, h: u.h, gl: best.gl, gw: best.gw, rot: best.r, tier: best.tier };
+      const box = { u: u, x: best.p.x, y: best.p.y, z: best.p.z, l: best.rl, w: best.rw, h: u.h, gl: best.gl, gw: best.gw, rot: best.r, tier: best.tier, below: best.sup, loadAbove: 0, relaxed: relaxed };
       placed.push(box);
+      best.sup.forEach(function (b) { addLoad(b, u.weight, new Set()); });
       wsum += u.weight;
-      const next = [];
       const seen = new Set();
+      const next = [];
       const push = function (q) {
         const key = Math.round(q.x * 10) + '|' + Math.round(q.y * 10) + '|' + Math.round(q.z * 10);
-        if (seen.has(key)) return;
-        seen.add(key);
-        next.push(q);
+        if (!seen.has(key)) { seen.add(key); next.push(q); }
       };
       pts.forEach(function (q) { if (q !== best.p) push(q); });
       push({ x: box.x + box.gl, y: box.y, z: box.z });
       push({ x: box.x, y: box.y + box.gw, z: box.z });
       push({ x: box.x, y: box.y, z: box.z + box.h });
-      // Bỏ điểm nằm lọt trong khối vừa đặt.
       pts = next.filter(function (q) {
         return !(q.x > box.x + EPS && q.x < box.x + box.gl - EPS && q.y > box.y + EPS && q.y < box.y + box.gw - EPS && q.z > box.z - EPS && q.z < box.z + box.h - EPS);
       });
     });
     return { placed: placed, unplaced: unplaced, weight: wsum };
+  }
+
+  function unloadViolations(placed) {
+    const pairs = new Map();
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = 0; j < placed.length; j++) {
+        if (i === j) continue;
+        const a = placed[i], b = placed[j];
+        if (b.u.stop > a.u.stop && blocksIllegally(a, b)) {
+          const key = a.u.stop + '|' + b.u.stop;
+          if (!pairs.has(key)) pairs.set(key, { early: a.u.stop, late: b.u.stop, count: 0, uids: [] });
+          const v = pairs.get(key);
+          v.count++;
+          v.uids.push(a.u.id, b.u.id);
+        }
+      }
+    }
+    return Array.from(pairs.values());
   }
 
   function packVehicle(units, veh, opts) {
@@ -285,50 +382,109 @@ const Solver = (function () {
         unplaced.push({ unit: u, reason: 'Nặng ' + u.weight.toFixed(1) + ' kg, vượt tải trọng xe (' + payload + ' kg).' });
       } else cand.push(u);
     });
+
     const vol = function (u) { return u.l * u.w * u.h; };
-    const orders = [
-      cand.slice().sort(function (a, b) { return vol(b) - vol(a); }),
-      cand.slice().sort(function (a, b) { return (b.l * b.w) - (a.l * a.w) || b.h - a.h; }),
-      cand.slice().sort(function (a, b) { return b.h - a.h || (b.l * b.w) - (a.l * a.w); }),
-      cand.slice().sort(function (a, b) { return b.weight - a.weight; }),
-      cand.slice(),
+    // Điểm giao sau xếp trước (sát đầu thùng); khối chưa gán điểm giao xếp sau cùng.
+    const stopKey = function (u) { return hasStop(u) ? -u.stop : 1e9; };
+    const byStop = function (cmp) { return function (a, b) { return stopKey(a) - stopKey(b) || cmp(a, b); }; };
+    const sorts = [
+      function (a, b) { return vol(b) - vol(a); },
+      function (a, b) { return (b.l * b.w) - (a.l * a.w) || b.h - a.h; },
+      function (a, b) { return b.h - a.h || (b.l * b.w) - (a.l * a.w); },
+      function (a, b) { return b.weight - a.weight; },
+      function (a, b) { return b.weight / vol(b) - a.weight / vol(a) || vol(b) - vol(a); },
+      function () { return 0; },
     ];
+    const runs = [];
+    // Khi có điểm giao: thêm vài cấu hình bỏ qua thứ tự điểm giao, phòng khi xếp đúng thứ tự thì không lên hết hàng.
+    // Phương án vi phạm bị trừ điểm nặng nên chỉ được chọn khi chở được nhiều hơn hẳn, và luôn có cảnh báo.
+    if (cand.some(hasStop)) {
+      [sorts[0], sorts[3]].forEach(function (s) { [0, 2].forEach(function (sc) { runs.push({ order: cand.slice().sort(s), rotFirst: false, score: sc, late: true }); }); });
+    }
+    sorts.forEach(function (s) {
+      const o = cand.slice().sort(byStop(s));
+      [0, 2, 1].forEach(function (score) { [false, true].forEach(function (rotFirst) { runs.push({ order: o, rotFirst: rotFirst, score: score }); }); });
+    });
+    // Dữ liệu lớn: giảm số cấu hình để giữ tốc độ.
+    const budget = cand.length > 400 ? 6 : cand.length > 200 ? 12 : runs.length;
+    const totalVol = V.L * V.W * V.H;
     let best = null;
-    orders.forEach(function (o) {
-      const r = runOrder(o, V, payload, gap);
+    const chosen = runs.filter(function (cf) { return !cf.late; }).slice(0, budget).concat(runs.filter(function (cf) { return cf.late; }));
+    chosen.forEach(function (cf, idx) {
+      const r = runOrder(cf.order, V, payload, { gap: gap, rotFirst: cf.rotFirst, score: cf.score, relax: true });
       const v = r.placed.reduce(function (s, b) { return s + b.l * b.w * b.h; }, 0);
-      if (!best || v > best.v + EPS || (Math.abs(v - best.v) <= EPS && r.placed.length > best.r.placed.length)) best = { r: r, v: v };
+      const relaxedCount = r.placed.filter(function (b) { return b.relaxed; }).length;
+      const m = vehicleMetrics(r.placed, V, payload);
+      let q = v - relaxedCount * 0.05 * totalVol;
+      if (m.warnings.length) q -= 0.02 * totalVol;
+      if (!best || q > best.q + EPS) best = { r: r, q: q };
+      if (opts.onProgress) opts.onProgress((idx + 1) / chosen.length);
     });
     const r = best ? best.r : { placed: [], unplaced: [], weight: 0 };
     r.unplaced.forEach(function (x) {
-      unplaced.push({ unit: x.unit, reason: x.reason === 'weight' ? 'Thêm vào sẽ vượt tải trọng xe (' + payload + ' kg).' : 'Hết chỗ trong thùng xe.' });
+      unplaced.push({ unit: x.unit, reason: x.reason === 'weight' ? 'Thêm vào sẽ vượt tải trọng xe (' + payload + ' kg).' : 'Hết chỗ trong thùng xe (hoặc không còn chỗ đỡ / chịu nén phù hợp).' });
     });
 
     const placements = r.placed.map(function (b, i) {
-      return { uid: b.u.id, seq: i + 1, x: b.x, y: b.y, z: b.z, l: b.l, w: b.w, h: b.h, rot: b.rot, tier: b.tier };
+      return { uid: b.u.id, seq: i + 1, x: b.x, y: b.y, z: b.z, l: b.l, w: b.w, h: b.h, rot: b.rot, tier: b.tier, loadAbove: b.loadAbove, relaxed: b.relaxed };
     });
     const metrics = vehicleMetrics(r.placed, V, payload);
-    return { placements: placements, unplaced: unplaced, metrics: metrics, warnings: metrics.warnings };
+    const viol = unloadViolations(r.placed);
+    viol.forEach(function (v) {
+      metrics.warnings.unshift('Vi phạm thứ tự dỡ hàng: ' + v.count + ' trường hợp hàng điểm giao ' + v.late + ' chặn hàng điểm giao ' + v.early + ' (phải dời hàng điểm ' + v.late + ' mới dỡ được điểm ' + v.early + ').');
+    });
+    const heavy = r.placed.filter(function (b) { return b.below.some(function (s) { return b.u.weight > s.u.weight * HEAVY_ON_LIGHT + EPS; }); }).length;
+    if (heavy) metrics.warnings.push(heavy + ' khối nặng đang đặt trên khối nhẹ hơn (không còn cách xếp khác). Kiểm tra lại khi chất hàng.');
+    metrics.unloadViolations = viol;
+    // Thứ tự chất thực tế: điểm giao sau trước, từ đầu thùng ra cửa, từ dưới lên.
+    const loadOrder = placements.slice().sort(function (a, b) {
+      const ua = byIdOf(r.placed, a.uid), ub = byIdOf(r.placed, b.uid);
+      return stopKey(ua) - stopKey(ub) || a.x - b.x || a.z - b.z || a.y - b.y;
+    }).map(function (p) { return p.uid; });
+    const extra = opts.estimateExtra === false ? [] : estimateExtra(r.placed, V, payload, gap, units);
+    return { placements: placements, loadOrder: loadOrder, unplaced: unplaced, metrics: metrics, warnings: metrics.warnings, extra: extra };
+  }
+
+  function byIdOf(placed, uid) {
+    for (let i = 0; i < placed.length; i++) if (placed[i].u.id === uid) return placed[i].u;
+    return null;
+  }
+
+  // Ước tính chỗ trống còn chứa thêm được bao nhiêu khối của mỗi loại (thử xếp thêm bản sao khối đầy đầu tiên).
+  function estimateExtra(placed, V, payload, gap, units) {
+    const protos = new Map();
+    units.forEach(function (u) { if (!protos.has(u.pid) || (protos.get(u.pid).partial && !u.partial)) protos.set(u.pid, u); });
+    const out = [];
+    protos.forEach(function (u) {
+      const copies = [];
+      for (let i = 0; i < 60; i++) copies.push(Object.assign({}, u, { id: u.id + '~' + i, stop: null }));
+      const r = runOrder(copies, V, payload, { gap: gap, init: placed });
+      const n = r.placed.length - placed.length;
+      if (n > 0) out.push({ pid: u.pid, code: u.code || u.name, kind: u.kind, count: n, limitedBy: r.unplaced.some(function (x) { return x.reason === 'weight'; }) ? 'tải trọng' : 'thể tích' });
+    });
+    return out;
   }
 
   function vehicleMetrics(placed, V, payload) {
-    let vol = 0, wt = 0, cx = 0, cy = 0, cz = 0;
+    let vol = 0, wt = 0, cx = 0, cy = 0, cz = 0, maxX = 0;
     placed.forEach(function (b) {
       vol += b.l * b.w * b.h;
       const w = b.u.weight;
       wt += w; cx += w * (b.x + b.l / 2); cy += w * (b.y + b.w / 2); cz += w * (b.z + b.h / 2);
+      maxX = Math.max(maxX, b.x + b.l);
     });
     const m = {
       volumePct: (vol / (V.L * V.W * V.H)) * 100,
       weightPct: (wt / payload) * 100,
       weightKg: wt, count: placed.length, volumeM3: vol / 1e9,
+      freeLength: V.L - maxX,
       cog: wt > 0 ? { x: cx / wt, y: cy / wt, z: cz / wt } : null,
       warnings: [],
     };
     if (m.cog) {
       m.cogOffX = (m.cog.x - V.L / 2) / V.L;
       m.cogOffY = (m.cog.y - V.W / 2) / V.W;
-      if (Math.abs(m.cogOffY) > 0.10) m.warnings.push('Trọng tâm lệch ' + (m.cogOffY > 0 ? 'phải' : 'trái') + ' ' + Math.abs(m.cogOffY * 100).toFixed(1).replace('.', ',') + '% chiều rộng thùng (ngưỡng cảnh báo 10%).');
+      if (Math.abs(m.cogOffY) > 0.10) m.warnings.push('Trọng tâm lệch ' + (m.cogOffY > 0 ? 'trái' : 'phải') + ' (nhìn từ cửa sau) ' + Math.abs(m.cogOffY * 100).toFixed(1).replace('.', ',') + '% chiều rộng thùng (ngưỡng cảnh báo 10%).');
       if (Math.abs(m.cogOffX) > 0.15) m.warnings.push('Trọng tâm lệch về ' + (m.cogOffX > 0 ? 'phía cửa sau' : 'phía đầu thùng') + ' ' + Math.abs(m.cogOffX * 100).toFixed(1).replace('.', ',') + '% chiều dài thùng (ngưỡng cảnh báo 15%).');
     }
     return m;
@@ -354,7 +510,7 @@ const Solver = (function () {
 
   const api = {
     analyzeProduct: analyzeProduct, layoutInfo: layoutInfo, tubePositions: tubePositions,
-    bestStandLayer: bestStandLayer, packVehicle: packVehicle, verifyPlacement: verifyPlacement,
+    bestStandLayer: bestStandLayer, packVehicle: packVehicle, verifyPlacement: verifyPlacement, unloadViolations: unloadViolations,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;

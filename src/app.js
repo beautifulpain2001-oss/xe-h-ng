@@ -80,7 +80,7 @@
       host.appendChild(el('div', { class: 'empty' }, 'Chưa có sản phẩm nào. Bấm "+ Thêm sản phẩm" hoặc "Nạp dữ liệu mẫu" để thử nhanh.'));
       return;
     }
-    const head = ['Mã hàng / tên', 'Số ống', 'Đóng gói', 'kg / ống', 'Đầy', 'Lẻ (ống)', 'Tổng khối lượng', 'Thể tích khối', 'Trạng thái', ''];
+    const head = ['Mã hàng / tên', 'Điểm giao', 'Số ống', 'Đóng gói', 'kg / ống', 'Đầy', 'Lẻ (ống)', 'Tổng khối lượng', 'Thể tích khối', 'Trạng thái', ''];
     const tbody = el('tbody');
     const notes = el('div', { class: 'notes' });
     state.products.forEach(function (p) {
@@ -90,6 +90,7 @@
       const status = a.errors.length ? el('span', { class: 'tag err' }, 'Lỗi') : a.warnings.length ? el('span', { class: 'tag warn' }, 'Cần xem') : el('span', { class: 'tag ok' }, 'Hợp lệ');
       tbody.appendChild(el('tr', null,
         el('td', null, el('b', null, p.code || ''), el('div', { class: 'sub' }, p.name || '')),
+        el('td', null, String(p.stop || '').trim() ? 'Điểm ' + p.stop : '–', el('div', { class: 'sub' }, p.customer || '')),
         el('td', { class: 'num' }, nf(Model.num(p.qty) || 0, 0)),
         el('td', null, PACK_NAME[p.packType] + (p.packType !== 'loose' ? ' (' + (p.perUnit || '?') + ' ống/' + unitWord + ')' : ''), el('div', { class: 'sub' }, (p.orient === 'lay' || p.packType === 'loose') ? 'Xếp nằm' : 'Xếp đứng')),
         el('td', { class: 'num' }, i ? nf(i.tubeKg, 3) + (i.kgEstimated ? ' (ước tính)' : '') : '–'),
@@ -180,7 +181,8 @@
     const grid = function () { return el('div', { class: 'grid' }, Array.prototype.slice.call(arguments)); };
     const u = p.unit;
     body.appendChild(section('Thông tin hàng'));
-    body.appendChild(grid(txt('code', 'Mã hàng', '', { text: true }), txt('name', 'Tên hàng', '', { text: true }), txt('customer', 'Khách hàng (dùng để tô màu)', 'Không bắt buộc', { text: true }), txt('qty', 'Số lượng ống (cái)')));
+    body.appendChild(grid(txt('code', 'Mã hàng', '', { text: true }), txt('name', 'Tên hàng', '', { text: true }), txt('customer', 'Khách hàng', 'Không bắt buộc', { text: true }), txt('qty', 'Số lượng ống (cái)'),
+      txt('stop', 'Thứ tự điểm giao', '1 = giao đầu tiên (xếp gần cửa). Để trống nếu chưa biết.')));
     body.appendChild(section('Kích thước và khối lượng ống'));
     body.appendChild(grid(
       sel('unit', 'Đơn vị nhập kích thước', [['mm', 'mm'], ['cm', 'cm'], ['m', 'm']]),
@@ -194,6 +196,7 @@
       sel('orient', 'Hướng ống', [['stand', 'Xếp đứng (không được lật)'], ['lay', 'Xếp nằm']], p.packType === 'loose' ? 'Hàng rời luôn xếp nằm.' : ''),
       chk('stackable', 'Cho phép xếp chồng hàng khác lên'),
       p.stackable ? txt('maxTiers', 'Số tầng chồng tối đa') : null,
+      p.stackable ? txt('maxLoad', 'Tải chịu nén tối đa (kg đè lên mỗi khối)', 'Tổng khối lượng hàng được phép chồng lên trên') : null,
       chk('nestable', 'Cho phép lồng ống nhỏ vào ống lớn (chưa tính ở GĐ1)')));
     body.appendChild(section('Quy cách đóng gói'));
     body.appendChild(grid(
@@ -309,11 +312,11 @@
       return Math.max(1, Math.floor(a.info.maxPerPallet * frac));
     };
     const list = [
-      mk({ code: 'FG10004-001', name: 'Ống 76x9x1200', customer: 'Bao bì Thủ Đô', qty: 4000, L: 1200, size: 38, weightMode: 'thickness', T: 9, orient: 'stand' }),
-      mk({ code: 'FG10154-126', name: 'Ống 35x325x120g, nâu', customer: 'Bao bì Việt', qty: 25200, L: 325, size: 17.5, weightMode: 'kg', kg: 0.12, orient: 'stand' }),
-      mk({ code: 'FG10145-004', name: 'Ống 77x7x1045, nâu', customer: 'Vinh Phú', qty: 1000, L: 1045, size: 38.5, weightMode: 'thickness', T: 7, orient: 'stand', stackable: true, maxTiers: 2 }),
-      mk({ code: 'FG10016-001', name: 'Ống 203.5x185x500g', customer: 'De Kohn', qty: 2700, L: 185, size: 101.75, weightMode: 'kg', kg: 0.5, packType: 'bundle', perUnit: 20, bunL: 600, bunW: 420, bunH: 400, bunKg: 1, orient: 'stand' }),
-      mk({ code: 'FG10465-003', name: 'Ống 76x5350x17.6kg', customer: 'MINHAN', qty: 120, L: 5350, size: 38, weightMode: 'kg', kg: 17.6, packType: 'loose', orient: 'lay' }),
+      mk({ code: 'FG10004-001', name: 'Ống 76x9x1200', customer: 'Bao bì Thủ Đô', stop: 3, qty: 1200, L: 1200, size: 38, weightMode: 'thickness', T: 9, orient: 'stand' }),
+      mk({ code: 'FG10154-126', name: 'Ống 35x325x120g, nâu', customer: 'Bao bì Việt', stop: 1, qty: 12000, L: 325, size: 17.5, weightMode: 'kg', kg: 0.12, orient: 'stand' }),
+      mk({ code: 'FG10145-004', name: 'Ống 77x7x1045, nâu', customer: 'Vinh Phú', stop: 2, qty: 1000, L: 1045, size: 38.5, weightMode: 'thickness', T: 7, orient: 'stand', stackable: true, maxTiers: 2 }),
+      mk({ code: 'FG10016-001', name: 'Ống 203.5x185x500g', customer: 'De Kohn', stop: 2, qty: 600, L: 185, size: 101.75, weightMode: 'kg', kg: 0.5, packType: 'bundle', perUnit: 20, bunL: 600, bunW: 420, bunH: 400, bunKg: 1, orient: 'stand' }),
+      mk({ code: 'FG10465-003', name: 'Ống 76x5350x17.6kg', customer: 'MINHAN', stop: 3, qty: 60, L: 5350, size: 38, weightMode: 'kg', kg: 17.6, packType: 'loose', orient: 'lay' }),
     ];
     list.forEach(function (p) { if (p.packType === 'pallet') p.perUnit = fit(p, 0.9); });
     state.products = list;
@@ -325,15 +328,17 @@
   /* ---------- Tab 3: Xếp thử một xe ---------- */
   let view = null;
   let worker = null;
+  // Trạng thái xem: lọc theo khách/điểm giao, cắt lớp, hoạt ảnh chất hàng / dỡ hàng theo tuyến.
+  const vs = { hiddenCust: new Set(), hiddenStop: new Set(), clipX: 1, clipY: 1, showFree: true, anim: null };
 
-  function runPack(units, veh, opts) {
+  function runPack(units, veh, opts, onProgress) {
     return new Promise(function (resolve) {
       const sync = function () { resolve(Solver.packVehicle(units, veh, opts)); };
       try {
-        const src = $('pure-src').textContent + '\nonmessage=function(e){var d=e.data;postMessage(Solver.packVehicle(d.units,d.veh,d.opts));};';
+        const src = $('pure-src').textContent + '\nonmessage=function(e){var d=e.data;d.opts.onProgress=function(p){postMessage({progress:p});};var r=Solver.packVehicle(d.units,d.veh,d.opts);postMessage({result:r});};';
         if (worker) worker.terminate();
         worker = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
-        worker.onmessage = function (e) { resolve(e.data); };
+        worker.onmessage = function (e) { if (e.data.result) resolve(e.data.result); else if (onProgress) onProgress(e.data.progress); };
         worker.onerror = function () { sync(); };
         worker.postMessage({ units: units, veh: veh, opts: opts });
       } catch (e) { sync(); }
@@ -348,8 +353,10 @@
       host.appendChild(el('div', { class: 'packmain' },
         el('div', { class: 'viewcol' },
           el('div', { class: 'viewtools', id: 'viewtools' }),
-          el('div', { id: 'canvas', class: 'canvas' }),
+          el('div', { id: 'canvas', class: 'canvas' }, el('div', { id: 'animlabel', class: 'animlabel', hidden: true })),
+          el('div', { id: 'player', class: 'player' }),
           el('div', { id: 'legend', class: 'legend' }),
+          el('div', { id: 'filters', class: 'filters' }),
           el('div', { id: 'pickinfo', class: 'pickinfo' })),
         el('div', { class: 'resultcol', id: 'results' })));
     }
@@ -363,6 +370,8 @@
     }
     if (view) setTimeout(view.resize, 0);
     renderResults();
+    buildPlayer();
+    buildFilters();
   }
 
   function buildPackBar() {
@@ -372,10 +381,11 @@
     if (!valid.some(function (v) { return v.id === state.vehId; })) state.vehId = valid.length ? valid[0].id : null;
     const vsel = el('select', { onchange: function () { state.vehId = vsel.value; } }, valid.map(function (v) { return el('option', { value: v.id, selected: v.id === state.vehId }, v.name); }));
     const ssel = el('select', { onchange: function () { state.scheme = ssel.value; redraw(); } },
-      [['code', 'Tô màu theo mã hàng'], ['customer', 'Tô màu theo khách hàng'], ['weight', 'Tô màu theo khối lượng']].map(function (o) { return el('option', { value: o[0], selected: state.scheme === o[0] }, o[1]); }));
+      [['code', 'Tô màu theo mã hàng'], ['customer', 'Tô màu theo khách hàng'], ['stop', 'Tô màu theo điểm giao'], ['weight', 'Tô màu theo khối lượng']].map(function (o) { return el('option', { value: o[0], selected: state.scheme === o[0] }, o[1]); }));
     const dchk = el('input', { type: 'checkbox', checked: state.detail, onchange: function () { state.detail = dchk.checked; redraw(); } });
     bar.appendChild(el('label', { class: 'inline' }, 'Xe: ', vsel));
-    bar.appendChild(el('button', { class: 'primary', onclick: doPack }, 'Xếp thử'));
+    bar.appendChild(el('button', { class: 'primary', id: 'btnPack', onclick: doPack }, 'Xếp thử'));
+    bar.appendChild(el('span', { id: 'progress', class: 'hint' }));
     bar.appendChild(ssel);
     bar.appendChild(el('label', { class: 'inline' }, dchk, ' Hiện từng ống'));
   }
@@ -386,7 +396,14 @@
     [['iso', '3D'], ['front', 'Trước'], ['back', 'Sau'], ['top', 'Trên'], ['side', 'Bên']].forEach(function (x) {
       t.appendChild(el('button', { onclick: function () { view.setView(x[0]); } }, x[1]));
     });
-    t.appendChild(el('span', { class: 'hint' }, 'Đầu thùng (sát ca-bin) ở bên trái, cửa sau ở bên phải khi nhìn từ bên hông.'));
+    const slider = function (label, key) {
+      const r = el('input', { type: 'range', min: 0, max: 100, value: Math.round(vs[key] * 100), oninput: function () { vs[key] = r.value / 100; view.setClip(vs.clipX, vs.clipY); } });
+      return el('label', { class: 'inline slider' }, label + ' ', r);
+    };
+    t.appendChild(slider('Cắt theo chiều dài', 'clipX'));
+    t.appendChild(slider('Cắt theo chiều cao', 'clipY'));
+    const fchk = el('input', { type: 'checkbox', checked: vs.showFree, onchange: function () { vs.showFree = fchk.checked; view.showFree(vs.showFree); } });
+    t.appendChild(el('label', { class: 'inline' }, fchk, ' Khoảng trống còn lại'));
   }
 
   async function doPack() {
@@ -401,44 +418,180 @@
       else units = units.concat(a.units);
     });
     if (!units.length) { toast('Chưa có sản phẩm hợp lệ để xếp. Kiểm tra tab "Sản phẩm".'); return; }
-    $('results').textContent = 'Đang tính…';
+    $('btnPack').disabled = true;
+    $('progress').textContent = 'Đang tính… 0%';
     const t0 = performance.now();
-    const r = await runPack(units, veh, { gap: state.settings.gap });
+    const r = await runPack(units, veh, { gap: state.settings.gap }, function (p) { $('progress').textContent = 'Đang tính… ' + Math.round(p * 100) + '%'; });
+    $('btnPack').disabled = false;
+    $('progress').textContent = '';
     const byId = {};
     units.forEach(function (u) { byId[u.id] = u; });
-    state.result = { veh: veh, vehName: v.name, r: r, byId: byId, skipped: skipped, ms: performance.now() - t0, totalUnits: units.length };
+    state.result = { veh: veh, vehName: v.name, r: r, byId: byId, skipped: skipped, ms: performance.now() - t0, totalUnits: units.length, grid: gridOf(r.placements) };
     state.picked = null;
+    vs.anim = null; vs.hiddenCust.clear(); vs.hiddenStop.clear();
     renderResults();
+    buildPlayer();
+    buildFilters();
     redraw();
   }
+
+  // Đánh số hàng (từ đầu thùng ra cửa) và cột (từ thành trái) theo các tọa độ khác nhau.
+  function gridOf(pl) {
+    const xs = Array.from(new Set(pl.map(function (p) { return Math.round(p.x); }))).sort(function (a, b) { return a - b; });
+    const ys = Array.from(new Set(pl.map(function (p) { return Math.round(p.y); }))).sort(function (a, b) { return a - b; });
+    const g = {};
+    pl.forEach(function (p) { g[p.uid] = { row: xs.indexOf(Math.round(p.x)) + 1, col: ys.indexOf(Math.round(p.y)) + 1 }; });
+    return g;
+  }
+
+  const stopLabel = function (s) { return typeof s === 'number' ? 'Điểm ' + s : 'Chưa gán'; };
 
   function redraw() {
     const R = state.result;
     if (!view || !R) return;
-    const legend = view.setScene({ vehicle: R.veh, placements: R.r.placements, unitsById: R.byId, scheme: state.scheme, detail: state.detail, cog: R.r.metrics.cog });
+    const legend = view.setScene({ vehicle: R.veh, placements: R.r.placements, unitsById: R.byId, scheme: state.scheme, detail: state.detail, cog: R.r.metrics.cog, freeLength: R.r.metrics.freeLength });
     view.setView('iso');
+    view.setClip(vs.clipX, vs.clipY);
+    view.showFree(vs.showFree);
     const lg = $('legend');
     lg.textContent = '';
     if (state.scheme === 'weight') lg.appendChild(el('span', { class: 'lg' }, el('i', { class: 'gradient' }), ' Nhẹ → nặng (kg mỗi khối)'));
     else legend.forEach(function (c, k) { lg.appendChild(el('span', { class: 'lg' }, el('i', { style: 'background:#' + c.getHexString() }), ' ' + k)); });
     lg.appendChild(el('span', { class: 'lg' }, el('i', { class: 'dot' }), ' Trọng tâm hàng'));
     lg.appendChild(el('span', { class: 'lg' }, el('i', { class: 'ring' }), ' Tâm sàn xe'));
+    if (R.r.metrics.freeLength > 1) lg.appendChild(el('span', { class: 'lg' }, el('i', { class: 'free' }), ' Khoảng trống phía cửa'));
+    lg.appendChild(el('span', { class: 'lg hint' }, 'Vách xanh nhạt = đầu thùng (sát ca-bin).'));
     if (state.detail) lg.appendChild(el('span', { class: 'lg hint' }, 'Chi tiết ống tối đa ' + nf(View3D.MAX_TUBES, 0) + ' ống, phần còn lại vẽ dạng khối.'));
+    applyViewState();
     showPick();
+  }
+
+  // Gộp bộ lọc và bước hoạt ảnh thành trạng thái hiển thị của từng khối.
+  function applyViewState() {
+    const R = state.result;
+    if (!view || !R) return;
+    const a = vs.anim;
+    let shown = null, current = null, unloadStop;
+    if (a && a.mode === 'load') {
+      shown = new Set(R.r.loadOrder.slice(0, a.step));
+      current = R.r.loadOrder[a.step - 1];
+    }
+    if (a && a.mode === 'unload') unloadStop = a.stops[a.step - 1];
+    view.applyState(function (uid) {
+      const u = R.byId[uid];
+      const filtered = vs.hiddenCust.has(u.customer || '') || vs.hiddenStop.has(stopLabel(u.stop));
+      if (filtered) return { visible: false };
+      if (a && a.mode === 'load') return { visible: shown.has(uid), highlight: uid === current };
+      if (a && a.mode === 'unload' && a.step > 0) {
+        const s = u.stop;
+        const before = function (x) { return a.stops.indexOf(stopLabel(x)) < a.stops.indexOf(unloadStop); };
+        if (before(s)) return { visible: false };
+        return { visible: true, highlight: stopLabel(s) === unloadStop, dim: stopLabel(s) !== unloadStop };
+      }
+      return { visible: true };
+    });
+    updateAnimLabel();
+  }
+
+  function stopsOf(R) {
+    const set = new Set();
+    R.r.placements.forEach(function (p) { set.add(R.byId[p.uid].stop); });
+    return Array.from(set).sort(function (a, b) { return (typeof a === 'number' ? a : 1e9) - (typeof b === 'number' ? b : 1e9); }).map(stopLabel);
+  }
+
+  let timer = null;
+  function buildPlayer() {
+    const host = $('player');
+    if (!host) return;
+    host.textContent = '';
+    const R = state.result;
+    if (!R || !R.r.placements.length) return;
+    const a = vs.anim;
+    const total = a ? (a.mode === 'load' ? R.r.loadOrder.length : a.stops.length) : 0;
+    const go = function (step) { vs.anim.step = Math.max(0, Math.min(total, step)); applyViewState(); buildPlayer(); };
+    const stop = function () { clearInterval(timer); timer = null; if (vs.anim) vs.anim.playing = false; };
+    const start = function (mode) {
+      stop();
+      vs.anim = { mode: mode, step: mode === 'load' ? 0 : 1, playing: false, speed: (vs.anim && vs.anim.speed) || 1, stops: stopsOf(R) };
+      applyViewState(); buildPlayer();
+    };
+    host.appendChild(el('button', { class: a && a.mode === 'load' ? 'on' : '', onclick: function () { start('load'); } }, 'Hoạt ảnh chất hàng'));
+    host.appendChild(el('button', { class: a && a.mode === 'unload' ? 'on' : '', onclick: function () { start('unload'); } }, 'Dỡ hàng theo tuyến'));
+    if (!a) return;
+    host.appendChild(el('button', { title: 'Về đầu', onclick: function () { stop(); go(a.mode === 'load' ? 0 : 1); } }, '⏮'));
+    host.appendChild(el('button', { title: 'Lùi một bước', onclick: function () { stop(); go(a.step - 1); } }, '◀'));
+    host.appendChild(el('button', { title: a.playing ? 'Tạm dừng' : 'Phát', onclick: function () {
+      if (a.playing) { stop(); buildPlayer(); return; }
+      if (a.step >= total) a.step = a.mode === 'load' ? 0 : 1;
+      a.playing = true;
+      timer = setInterval(function () {
+        if (!vs.anim || vs.anim.step >= total) { stop(); buildPlayer(); return; }
+        go(vs.anim.step + 1);
+      }, (a.mode === 'load' ? 700 : 1800) / a.speed);
+      buildPlayer();
+    } }, a.playing ? '⏸' : '▶'));
+    host.appendChild(el('button', { title: 'Tới một bước', onclick: function () { stop(); go(a.step + 1); } }, '▶|'));
+    const sp = el('select', { onchange: function () { a.speed = Number(sp.value); if (a.playing) { stop(); buildPlayer(); } } },
+      [0.5, 1, 2, 4].map(function (x) { return el('option', { value: x, selected: a.speed === x }, 'Tốc độ ×' + String(x).replace('.', ',')); }));
+    host.appendChild(sp);
+    host.appendChild(el('span', { class: 'hint' }, 'Bước ' + a.step + ' / ' + total));
+    host.appendChild(el('button', { onclick: function () { stop(); vs.anim = null; applyViewState(); buildPlayer(); } }, 'Thoát hoạt ảnh'));
+  }
+
+  function updateAnimLabel() {
+    const lab = $('animlabel');
+    const R = state.result, a = vs.anim;
+    if (!lab) return;
+    if (!a || !R) { lab.hidden = true; return; }
+    lab.hidden = false;
+    if (a.mode === 'load') {
+      const uid = R.r.loadOrder[a.step - 1];
+      if (!uid) { lab.textContent = 'Thùng trống. Bấm ▶ để xem chất hàng theo thứ tự (điểm giao cuối chất trước).'; return; }
+      const u = R.byId[uid], g = R.grid[uid], p = R.r.placements.find(function (x) { return x.uid === uid; });
+      lab.textContent = 'Bước ' + a.step + ': chất ' + (u.code || u.name) + (u.partial ? ' (lẻ)' : '') + ' · ' + (u.customer || '') + ' · ' + stopLabel(u.stop) + ' · hàng ' + g.row + ', cột ' + g.col + ', tầng ' + p.tier;
+    } else {
+      const s = a.stops[a.step - 1];
+      const list = R.r.placements.filter(function (p) { return stopLabel(R.byId[p.uid].stop) === s; });
+      const tubes = list.reduce(function (t, p) { return t + R.byId[p.uid].tubes; }, 0);
+      const kg = list.reduce(function (t, p) { return t + R.byId[p.uid].weight; }, 0);
+      const cust = Array.from(new Set(list.map(function (p) { return R.byId[p.uid].customer || '(chưa có khách)'; }))).join(', ');
+      lab.textContent = s + ' (' + cust + '): dỡ ' + list.length + ' khối, ' + nf(tubes, 0) + ' ống, ' + fmt.kg(kg) + '. Khối viền cam là hàng dỡ ở điểm này.';
+    }
+  }
+
+  function buildFilters() {
+    const host = $('filters');
+    if (!host) return;
+    host.textContent = '';
+    const R = state.result;
+    if (!R || !R.r.placements.length) return;
+    const custs = Array.from(new Set(R.r.placements.map(function (p) { return R.byId[p.uid].customer || ''; })));
+    const stops = stopsOf(R);
+    const group = function (title, values, set, label) {
+      const g = el('div', { class: 'fgroup' }, el('span', { class: 'hint' }, title + ':'));
+      values.forEach(function (v) {
+        const c = el('input', { type: 'checkbox', checked: !set.has(v), onchange: function () { if (c.checked) set.delete(v); else set.add(v); applyViewState(); } });
+        g.appendChild(el('label', { class: 'inline' }, c, ' ' + label(v)));
+      });
+      return g;
+    };
+    if (custs.length > 1) host.appendChild(group('Hiện theo khách', custs, vs.hiddenCust, function (v) { return v || '(chưa có khách)'; }));
+    if (stops.length > 1) host.appendChild(group('Hiện theo điểm giao', stops, vs.hiddenStop, function (v) { return v; }));
   }
 
   function showPick() {
     const box = $('pickinfo');
     box.textContent = '';
     const R = state.result;
-    if (!R || !state.picked) { box.appendChild(el('span', { class: 'hint' }, 'Bấm vào một khối trong hình 3D để xem chi tiết.')); return; }
+    if (!R || !state.picked) { box.appendChild(el('span', { class: 'hint' }, 'Bấm vào một khối trong hình 3D (hoặc một dòng trong danh sách) để xem chi tiết.')); return; }
     const pl = R.r.placements.find(function (p) { return p.uid === state.picked; });
     const u = R.byId[state.picked];
     if (!pl || !u) return;
+    const g = R.grid[pl.uid];
     box.appendChild(el('div', null, el('b', null, (u.code || u.name) + (u.partial ? ' (lẻ)' : '')), ' · ' + (u.name || '')));
-    box.appendChild(el('div', null, 'Khách: ' + (u.customer || '(chưa có)') + ' · ' + nf(u.tubes, 0) + ' ống · ' + fmt.kg(u.weight)));
-    box.appendChild(el('div', null, 'Kích thước ' + nf(pl.l, 0) + ' × ' + nf(pl.w, 0) + ' × ' + nf(pl.h, 0) + ' mm · tầng ' + pl.tier));
-    box.appendChild(el('div', null, 'Vị trí: cách đầu thùng ' + fmt.mm(pl.x) + ', cách thành trái ' + fmt.mm(pl.y) + ', cách sàn ' + fmt.mm(pl.z)));
+    box.appendChild(el('div', null, 'Khách: ' + (u.customer || '(chưa có)') + ' · ' + stopLabel(u.stop) + ' · ' + nf(u.tubes, 0) + ' ống · ' + fmt.kg(u.weight)));
+    box.appendChild(el('div', null, 'Kích thước ' + nf(pl.l, 0) + ' × ' + nf(pl.w, 0) + ' × ' + nf(pl.h, 0) + ' mm · hàng ' + g.row + ', cột ' + g.col + ', tầng ' + pl.tier + (pl.loadAbove ? ' · đang chịu ' + fmt.kg(pl.loadAbove) + ' đè lên' : '')));
+    box.appendChild(el('div', null, 'Vị trí: cách đầu thùng ' + fmt.mm(pl.x) + ', cách thành phải (nhìn từ cửa sau) ' + fmt.mm(pl.y) + ', cách sàn ' + fmt.mm(pl.z)));
   }
 
   function highlightRow() {
@@ -454,15 +607,47 @@
       return;
     }
     const m = R.r.metrics;
+    const th = function (cols) { return el('thead', null, el('tr', null, cols.map(function (h) { return el('th', { text: h }); }))); };
     host.appendChild(el('h3', null, 'Kết quả xếp: ' + R.vehName));
     host.appendChild(el('div', { class: 'cards' },
-      card('Lấp đầy thể tích', fmt.pct(m.volumePct), nf(m.volumeM3, 2) + ' m³ hàng'),
+      card('Lấp đầy thể tích', fmt.pct(m.volumePct), nf(m.volumeM3, 2) + ' m³ hàng / ' + nf(R.veh.volume, 2) + ' m³ thùng'),
       card('Dùng tải trọng', fmt.pct(m.weightPct), fmt.kg(m.weightKg) + ' / ' + fmt.kg(R.veh.payload)),
       card('Lên xe', nf(m.count, 0) + ' / ' + nf(R.totalUnits, 0), 'khối pallet/kiện/rời'),
       card('Không lên được', nf(R.r.unplaced.length, 0), 'khối')));
+    if (m.cog) {
+      const okX = Math.abs(m.cogOffX) <= 0.15, okY = Math.abs(m.cogOffY) <= 0.10;
+      host.appendChild(el('div', { class: 'cogbar' },
+        el('span', null, 'Trọng tâm hàng: '),
+        el('span', { class: 'tag ' + (okX ? 'ok' : 'warn') }, 'dọc ' + (m.cogOffX >= 0 ? 'lệch về cửa ' : 'lệch về đầu thùng ') + fmt.pct(Math.abs(m.cogOffX * 100))),
+        el('span', { class: 'tag ' + (okY ? 'ok' : 'warn') }, 'ngang ' + (m.cogOffY >= 0 ? 'lệch trái ' : 'lệch phải ') + fmt.pct(Math.abs(m.cogOffY * 100))),
+        el('span', { class: 'hint' }, ' (nhìn từ cửa sau; ngưỡng 15% dọc, 10% ngang)')));
+    }
     R.skipped.forEach(function (s) { host.appendChild(el('div', { class: 'note err' }, 'Bỏ qua do dữ liệu lỗi. ' + s)); });
-    m.warnings.forEach(function (w) { host.appendChild(el('div', { class: 'note warn' }, w)); });
-    host.appendChild(el('p', { class: 'hint' }, 'Đây là phương án gợi ý theo heuristic, không đảm bảo tối ưu tuyệt đối. Khi xếp thật cần kiểm tra chằng buộc và an toàn. Tính trong ' + nf(R.ms, 0) + ' ms.'));
+    m.warnings.forEach(function (w) { host.appendChild(el('div', { class: /thứ tự dỡ/.test(w) ? 'note err' : 'note warn' }, w)); });
+
+    // Khoảng trống còn lại
+    const ex = R.r.extra || [];
+    host.appendChild(el('h4', null, 'Khoảng trống còn lại'));
+    host.appendChild(el('div', { class: 'note ok' }, (m.freeLength > 1 ? 'Phía cửa sau còn trống ' + fmt.mm(m.freeLength) + ' chiều dài thùng. ' : '') +
+      (ex.length ? 'Ước tính còn chứa thêm: ' + ex.map(function (e) { return nf(e.count, 0) + (e.count >= 60 ? '+' : '') + ' ' + (e.kind === 'bundle' ? 'kiện' : e.kind === 'loose' ? 'khối' : 'pallet') + ' ' + e.code + ' (giới hạn bởi ' + e.limitedBy + ')'; }).join('; ') + '. Mỗi con số tính riêng cho từng loại, không cộng dồn.' : 'Không còn chỗ cho thêm khối nào của các loại hàng hiện có.')));
+
+    // Tổng hợp theo điểm giao
+    const byStop = new Map();
+    R.r.placements.forEach(function (p) {
+      const u = R.byId[p.uid];
+      const k = stopLabel(u.stop);
+      if (!byStop.has(k)) byStop.set(k, { stop: u.stop, cust: new Set(), n: 0, tubes: 0, kg: 0 });
+      const s = byStop.get(k);
+      s.cust.add(u.customer || '(chưa có khách)'); s.n++; s.tubes += u.tubes; s.kg += u.weight;
+    });
+    if (byStop.size) {
+      const tb = el('tbody');
+      Array.from(byStop.entries()).sort(function (a, b) { return (typeof a[1].stop === 'number' ? a[1].stop : 1e9) - (typeof b[1].stop === 'number' ? b[1].stop : 1e9); }).forEach(function (e) {
+        tb.appendChild(el('tr', null, el('td', null, e[0]), el('td', null, Array.from(e[1].cust).join(', ')), el('td', { class: 'num' }, nf(e[1].n, 0)), el('td', { class: 'num' }, nf(e[1].tubes, 0)), el('td', { class: 'num' }, fmt.kg(e[1].kg))));
+      });
+      host.appendChild(el('h4', null, 'Tổng hợp theo điểm giao (thứ tự dỡ)'));
+      host.appendChild(el('div', { class: 'tablewrap' }, el('table', null, th(['Điểm giao', 'Khách', 'Số khối', 'Số ống', 'Khối lượng']), tb)));
+    }
 
     if (R.r.unplaced.length) {
       const groups = new Map();
@@ -470,19 +655,21 @@
       const tb = el('tbody');
       groups.forEach(function (g) { tb.appendChild(el('tr', null, el('td', null, g.u.code || g.u.name), el('td', { class: 'num' }, nf(g.n, 0)), el('td', null, g.reason))); });
       host.appendChild(el('h4', null, 'Hàng không lên được xe'));
-      host.appendChild(el('div', { class: 'tablewrap' }, el('table', null, el('thead', null, el('tr', null, ['Mã hàng', 'Số khối', 'Lý do'].map(function (h) { return el('th', { text: h }); }))), tb)));
+      host.appendChild(el('div', { class: 'tablewrap' }, el('table', null, th(['Mã hàng', 'Số khối', 'Lý do']), tb)));
     }
-    host.appendChild(el('h4', null, 'Danh sách chất hàng (theo thứ tự đặt)'));
+    host.appendChild(el('h4', null, 'Thứ tự chất hàng (điểm giao cuối chất trước, từ đầu thùng ra cửa)'));
     const tb = el('tbody');
-    R.r.placements.forEach(function (p) {
-      const u = R.byId[p.uid];
-      tb.appendChild(el('tr', { 'data-uid': p.uid, onclick: function () { state.picked = p.uid; view && view.select(p.uid); showPick(); highlightRow(); } },
-        el('td', { class: 'num' }, p.seq), el('td', null, (u.code || u.name) + (u.partial ? ' (lẻ)' : '')), el('td', null, u.customer || ''),
+    const plById = {};
+    R.r.placements.forEach(function (p) { plById[p.uid] = p; });
+    R.r.loadOrder.forEach(function (uid, i) {
+      const p = plById[uid], u = R.byId[uid], g = R.grid[uid];
+      tb.appendChild(el('tr', { 'data-uid': uid, class: p.relaxed ? 'relaxed' : '', onclick: function () { state.picked = uid; if (view) view.select(uid); showPick(); highlightRow(); } },
+        el('td', { class: 'num' }, i + 1), el('td', null, (u.code || u.name) + (u.partial ? ' (lẻ)' : '')), el('td', null, u.customer || ''), el('td', null, stopLabel(u.stop)),
         el('td', { class: 'num' }, nf(u.tubes, 0)), el('td', { class: 'num' }, nf(u.weight, 1)),
-        el('td', { class: 'num' }, nf(p.x, 0) + ' / ' + nf(p.y, 0) + ' / ' + nf(p.z, 0)), el('td', { class: 'num' }, p.tier)));
+        el('td', { class: 'num' }, g.row + ' / ' + g.col + ' / ' + p.tier)));
     });
-    host.appendChild(el('div', { class: 'tablewrap tall' }, el('table', null,
-      el('thead', null, el('tr', null, ['#', 'Mã hàng', 'Khách', 'Số ống', 'kg', 'Vị trí x / y / z (mm)', 'Tầng'].map(function (h) { return el('th', { text: h }); }))), tb)));
+    host.appendChild(el('div', { class: 'tablewrap tall' }, el('table', null, th(['#', 'Mã hàng', 'Khách', 'Điểm giao', 'Số ống', 'kg', 'Hàng / cột / tầng']), tb)));
+    host.appendChild(el('p', { class: 'hint' }, 'Hàng đánh số từ đầu thùng (1) ra cửa sau; cột 1 sát thành bên phải khi đứng ở cửa sau nhìn vào; tầng 1 là sàn. Đây là phương án gợi ý theo heuristic, không đảm bảo tối ưu tuyệt đối; khi xếp thật cần kiểm tra chằng buộc và an toàn. Tính trong ' + nf(R.ms, 0) + ' ms.'));
     highlightRow();
   }
   function card(title, big, sub) { return el('div', { class: 'card' }, el('div', { class: 'ct' }, title), el('div', { class: 'cb' }, big), el('div', { class: 'cs' }, sub)); }
