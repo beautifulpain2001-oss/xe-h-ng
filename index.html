@@ -811,7 +811,7 @@ const Solver = (function () {
       [0, 2, 1].forEach(function (score) { [false, true].forEach(function (rotFirst) { runs.push({ order: o, rotFirst: rotFirst, score: score }); }); });
     });
     // Dữ liệu lớn: giảm số cấu hình để giữ tốc độ.
-    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 12 : runs.length;
+    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 8 : runs.length;
     const totalVol = V.L * V.W * V.H;
     let best = null;
     const chosen = runs.filter(function (cf) { return !cf.late; }).slice(0, budget).concat(runs.filter(function (cf) { return cf.late; }));
