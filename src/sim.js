@@ -450,7 +450,7 @@ const simTruck = t => vehById(t.truckId) || (SIM.sample ? { name: 'Xe mẫu (ch�
 /* ---------- Nhập liệu ---------- */
 function simSet(f, v) {
   const c = simCfg();
-  if (f === 'date') { SIM.date = v; SIM.res = null; SIM.hist = []; }
+  if (f === 'date') { SIM.date = v; SIM.res = null; SIM.hist = []; SIM.test = null; }
   else if (f === 'obj') SIM.objective = v;
   else if (f === 'trips') c.trips = Number(v) || 1;
   else if (f === 'depot') c.depot = v;
@@ -585,6 +585,7 @@ function simResultHtml() {
     + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;align-items:center"><button class="btn gy"' + (hist ? '' : ' disabled') + ' onclick="simUndo()">↶ Hoàn tác chỉnh tay</button><button class="btn gy" onclick="simSavePlan()">Lưu phương án này để so sánh</button>'
     + '<span style="margin-left:auto"></span><button class="btn bl" onclick="simExcel()">Xuất Excel</button><button class="btn bl" onclick="simPdf()">Xuất PDF / In</button><button class="btn gr" onclick="simApply(\'all\')">Gán xe cho tất cả chuyến vào kế hoạch</button></div>'
     + simComparePanel()
+    + simMapHtml(R)
     + P.trips.map((t, i) => simTripHtml(R, t, i)).join('')
     + (P.trips.length ? '<div class="newtrip" ondragover="simOver(event)" ondragleave="simLeave(event)" ondrop="simDrop(event,\'new\')">Thả điểm giao vào đây để tạo chuyến mới</div>' : '')
     + '<div class="hint">Kết quả là phương án gợi ý theo heuristic (không đảm bảo tối ưu tuyệt đối); khoảng cách tính từ vị trí quận/huyện nên chỉ là ước tính, không phải quãng đường thực. Khi xếp thật cần kiểm tra chằng buộc và an toàn.</div></section>';

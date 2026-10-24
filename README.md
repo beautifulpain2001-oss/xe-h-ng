@@ -55,6 +55,7 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Mỗi dòng có mức **Thường / Ưu tiên / Bắt buộc** (cờ "Ưu tiên" của lịch gốc tự tính là Ưu tiên). Mỗi mã hàng có thể nhập số lượng **sẵn sàng buổi sáng** và **tổng đến chiều** (trống = đủ hàng).
 - Mỗi dòng chỉ giao khi đủ số lượng. Hàng được chia theo thứ tự ưu tiên, dòng bắt buộc chọn buổi sớm nhất đủ hàng; chưa đủ buổi sáng thì dời sang chiều, chưa đủ cả ngày thì để ngày sau.
 - Mỗi buổi chạy bộ gom đơn riêng với toàn bộ xe. Nếu dòng bắt buộc chưa lên xe, bộ lập tìm nhị phân số dòng ít ưu tiên phải nhường chỗ; dòng nhường và dòng không có xe được chuyển sang buổi sau, cuối ngày còn lại thì báo "chưa lên xe".
+- Bản đồ các chuyến (`src/simmap.js`): vẽ kho, điểm giao theo thứ tự và đường nối của từng chuyến (nét đứt = chiều), kéo / phóng to, lọc theo chuyến. Offline chỉ có lưới kinh vĩ độ và mốc tỉnh; khi có mạng bật được nền OpenStreetMap. Đường vẽ là đường thẳng, không phải đường bộ.
 - Tab có đủ công cụ như màn xếp hàng: kéo thả điểm giao giữa chuyến, đổi xe / buổi, hoàn tác, lưu và so sánh phương án, ràng buộc ghép tách theo tên khách, xuất Excel / PDF, xem 3D đầy đủ (tô màu, góc nhìn, cắt lớp, lọc, hoạt ảnh chất / dỡ hàng).
 
 - Lấy dòng hàng của ngày giao từ Kế hoạch ngày đã xuất (hoặc các dòng đang mở theo lịch), xe từ danh sách xe, địa chỉ từ danh sách khách hàng của file.
@@ -76,3 +77,10 @@ Các giới hạn của heuristic (không đảm bảo tối ưu tuyệt đối)
 - Khoảng cách là ước tính (nhập tay, tọa độ chim bay × hệ số đường, cùng khu vực 5 km, còn lại 60 km), không dùng bản đồ đường thực, không tính giờ giao, cửa sổ thời gian, tải/dỡ hàng hay giới hạn giờ lái.
 - Sản phẩm tạo từ Excel chỉ là gợi ý từ tên hàng; cần kiểm tra quy cách đóng gói thật.
 - Khi xếp thật vẫn cần kiểm tra chằng buộc và an toàn.
+
+## Bản máy tính (.exe)
+
+- `desktop/` là vỏ Electron mở thẳng file đã tích hợp, không tải gì từ mạng (thư viện Excel và 3D nhúng sẵn trong file). `sh desktop/build-exe.sh <file-ke-hoach-goc.html>` dựng ra `desktop/dist/KeHoachGiaoHang.exe` (Windows, portable một file, khoảng 75 MB). Có thể dựng trên Linux/macOS, cần Node và mạng lần đầu để tải Electron.
+- Dữ liệu lưu trong thư mục `DuLieuKeHoach` nằm cạnh file .exe. Chuyển dữ liệu từ bản trình duyệt: "Lưu dữ liệu ra file (.json)" ở bản cũ, rồi "Mở file dữ liệu (.json)" ở bản .exe.
+- Tab "Xếp thử xe" là phần xếp một xe của ứng dụng xếp ống giấy (chọn khách trong ngày và/hoặc nhập hàng tay, xếp lên một xe, xem 3D).
+- Chỉ tính năng quét ảnh phiếu xuất kho (OCR) của file gốc vẫn cần mạng để tải bộ nhận dạng chữ.

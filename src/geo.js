@@ -99,7 +99,9 @@ const Geo = (function () {
     return { name: e.level === 2 ? e.name + ', ' + e.province : e.name, province: e.province, lat: e.lat, lng: e.lng, level: e.level };
   }
 
-  const api = { locate: locate, normalize: nz, ENTRIES: entries.length };
+  // Danh sách tỉnh/thành (tên + tọa độ trung tâm xấp xỉ) để vẽ làm mốc trên bản đồ offline.
+  function provinces() { return P1.map(function (row) { const f = row.split('|'); return { name: f[0], lat: +f[2], lng: +f[3] }; }); }
+  const api = { locate: locate, normalize: nz, provinces: provinces, ENTRIES: entries.length };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;
 })();

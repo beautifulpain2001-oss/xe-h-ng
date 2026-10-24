@@ -4,7 +4,7 @@ const SV = { i: 0, scheme: 'customer', detail: false, clipX: 1, clipY: 1, free: 
 const svStop = s => typeof s === 'number' ? 'Điểm ' + s : 'Chưa gán';
 
 function svCur() {
-  const R = SIM.res, t = R && R.plan.trips[SV.i];
+  const R = SIM.res, t = SV.over || (R && R.plan.trips[SV.i]);
   if (!t) return null;
   if (!SV.cur || SV.cur.t !== t) {
     const byId = {}; t.units.forEach(u => { byId[u.id] = u; });
@@ -16,9 +16,9 @@ function svCur() {
   return SV.cur;
 }
 
-function simView3d(i) {
-  const R = SIM.res; if (!R) return;
-  SV.i = i; SV.cur = null; SV.anim = null; SV.hc.clear(); SV.hs.clear(); SV.picked = null; svTimerStop();
+function simView3d(i, over) {
+  const R = SIM.res; if (!R && !over) return;
+  SV.over = over || null; SV.i = i; SV.cur = null; SV.anim = null; SV.hc.clear(); SV.hs.clear(); SV.picked = null; svTimerStop();
   let m = document.getElementById('simmodal');
   if (!m) {
     m = document.createElement('div'); m.id = 'simmodal';
@@ -48,7 +48,7 @@ function svTools() {
 }
 function svShot() {
   if (!SIMV) return;
-  const a = document.createElement('a'); a.href = SIMV.snapshot(); a.download = 'chuyen-' + (SIM.res.plan.trips[SV.i].no) + '.png'; document.body.appendChild(a); a.click(); a.remove();
+  const a = document.createElement('a'); a.href = SIMV.snapshot(); a.download = 'chuyen-' + ((SV.over || SIM.res.plan.trips[SV.i]).no || 'thu') + '.png'; document.body.appendChild(a); a.click(); a.remove();
 }
 
 function svDraw() {
