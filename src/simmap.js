@@ -1,7 +1,7 @@
 /* BẢN ĐỒ GIẢ LẬP: vẽ kho, các điểm giao và đường đi của từng chuyến (hoặc tất cả chuyến) bằng SVG, có kéo / phóng to.
- * Chạy offline: nền chỉ có lưới kinh vĩ độ và mốc các tỉnh; khi có mạng có thể bật nền bản đồ OpenStreetMap.
+ * Chạy hoàn toàn offline: nền chỉ có lưới kinh vĩ độ và mốc các tỉnh, không tải bản đồ nào từ mạng.
  * Đường vẽ là đường thẳng nối các điểm theo thứ tự giao (không phải đường bộ thực). Vị trí khách chỉ chính xác đến quận/huyện. */
-const SIMMAP = { sel: 0, tiles: typeof navigator !== 'undefined' && navigator.onLine !== false, names: true, prov: true, cx: 0.5, cy: 0.5, z: 6, key: null, W: 1000, H: 480, drag: null };
+const SIMMAP = { sel: 0, names: true, prov: true, cx: 0.5, cy: 0.5, z: 6, key: null, W: 1000, H: 480, drag: null };
 const SMCOL = ['#2f6fb5', '#e8731a', '#c8322d', '#17908a', '#3c9a3a', '#b08a00', '#8a4fb0', '#d4568a', '#7a5a45', '#5b6b82'];
 const smX = lng => (lng + 180) / 360;
 const smY = lat => { const r = Math.max(-85, Math.min(85, lat)) * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2; };
@@ -37,14 +37,7 @@ function simMapSvg(R) {
   const W = SIMMAP.W, H = SIMMAP.H, m = simMapPoints(R), k = 256 * Math.pow(2, SIMMAP.z);
   const px = lng => (smX(lng) - SIMMAP.cx) * k + W / 2, py = lat => (smY(lat) - SIMMAP.cy) * k + H / 2;
   const o = ['<svg id="simmapsvg" viewBox="0 0 ' + W + ' ' + H + '" width="100%" style="background:#eef2f6;border-radius:8px;display:block;cursor:grab;touch-action:none;user-select:none" onwheel="simMapWheel(event)" onpointerdown="simMapDown(event)"><defs><clipPath id="smclip"><rect width="' + W + '" height="' + H + '"/></clipPath></defs><g clip-path="url(#smclip)">'];
-  if (SIMMAP.tiles) {
-    const tz = Math.max(3, Math.min(17, Math.round(SIMMAP.z))), n = Math.pow(2, tz), ts = 256 * Math.pow(2, SIMMAP.z - tz);
-    const x0 = Math.floor((SIMMAP.cx - W / 2 / k) * n), x1 = Math.floor((SIMMAP.cx + W / 2 / k) * n), y0 = Math.floor((SIMMAP.cy - H / 2 / k) * n), y1 = Math.floor((SIMMAP.cy + H / 2 / k) * n);
-    if ((x1 - x0 + 1) * (y1 - y0 + 1) <= 60) for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
-      if (y < 0 || y >= n) continue;
-      o.push('<image href="https://tile.openstreetmap.org/' + tz + '/' + (((x % n) + n) % n) + '/' + y + '.png" x="' + ((x / n - SIMMAP.cx) * k + W / 2).toFixed(1) + '" y="' + ((y / n - SIMMAP.cy) * k + H / 2).toFixed(1) + '" width="' + (ts + 0.6).toFixed(1) + '" height="' + (ts + 0.6).toFixed(1) + '"/>');
-    }
-  } else {
+  {
     // Lưới kinh vĩ độ, bước tự chọn theo mức phóng.
     const spans = [10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05], deg = 360 / k * 90, step = spans.slice().reverse().find(s => s >= deg) || 10;
     const lat0 = 85 - 0, lng0 = SIMMAP.cx * 360 - 180 - W / 2 / k * 360, lng1 = SIMMAP.cx * 360 - 180 + W / 2 / k * 360;
@@ -78,7 +71,7 @@ function simMapSvg(R) {
     if (SIMMAP.names) o.push('<text x="' + (mk.p[0] + 13).toFixed(1) + '" y="' + (mk.p[1] + 4).toFixed(1) + '" font-size="11" fill="#1d2b3a" paint-order="stroke" stroke="#fffffff0" stroke-width="3">' + esc(s.customers.join(', ').slice(0, 26)) + '</text>');
   });
   if (d) o.push('<g><title>' + esc('Kho xuất phát: ' + (d.address || d.region || '')) + '</title><rect x="' + (px(d.lng) - 9).toFixed(1) + '" y="' + (py(d.lat) - 9).toFixed(1) + '" width="18" height="18" rx="3" fill="#1f2937" stroke="#fff" stroke-width="2"/><text x="' + px(d.lng).toFixed(1) + '" y="' + (py(d.lat) + 4).toFixed(1) + '" font-size="11" font-weight="700" fill="#fff" text-anchor="middle">K</text><text x="' + (px(d.lng) + 13).toFixed(1) + '" y="' + (py(d.lat) + 4).toFixed(1) + '" font-size="11" font-weight="700" fill="#1f2937" paint-order="stroke" stroke="#fffffff0" stroke-width="3">Kho ' + esc((d.region || d.address || '').slice(0, 24)) + '</text></g>');
-  o.push('</g>' + (SIMMAP.tiles ? '<text x="' + (W - 6) + '" y="' + (H - 5) + '" font-size="10" fill="#444" text-anchor="end" paint-order="stroke" stroke="#fff" stroke-width="3">© OpenStreetMap</text>' : '') + '</svg>');
+  o.push('</g>' + '' + '</svg>');
   return o.join('');
 }
 function simMapLegend(R) {
@@ -104,7 +97,7 @@ function simMapHtml(R) {
   return '<details class="p" open style="margin:10px 0"><summary style="cursor:pointer;font-weight:700;color:#1f4a85">Bản đồ các chuyến</summary>'
     + '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:6px 0"><select id="simmapsel" onchange="simMapSet(\'sel\',this.value)"><option value="0">Tất cả chuyến</option>' + R.plan.trips.map(t => '<option value="' + t.no + '"' + (SIMMAP.sel === t.no ? ' selected' : '') + '>Chuyến ' + t.no + '</option>').join('') + '</select>'
     + '<button class="btn gy" style="padding:3px 10px" onclick="simMapSet(\'zoom\',1)">＋</button><button class="btn gy" style="padding:3px 10px" onclick="simMapSet(\'zoom\',-1)">－</button><button class="btn gy" style="padding:3px 10px" onclick="simMapSet(\'fit\')">Vừa khung</button>'
-    + ck('names', 'Tên khách') + ck('prov', 'Mốc tỉnh') + ck('tiles', 'Nền bản đồ (cần mạng)') + '</div><div id="simmapbox">' + simMapSvg(R) + simMapLegend(R) + '</div></details>';
+    + ck('names', 'Tên khách') + ck('prov', 'Mốc tỉnh') + '</div><div id="simmapbox">' + simMapSvg(R) + simMapLegend(R) + '</div></details>';
 }
 
 /* ---------- Kéo và phóng to ---------- */
