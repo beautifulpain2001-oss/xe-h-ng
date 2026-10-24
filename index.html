@@ -3016,11 +3016,17 @@ const View3D = (function () {
   }
   const costOk = function (input) { return input.vehicles.every(function (v) { return v.cost !== null && v.cost !== undefined; }); };
 
+  // Chữ ký dữ liệu đầu vào để nhận biết kế hoạch đã cũ khi đơn / xe thay đổi sau đó.
+  function sigOf(input) {
+    return JSON.stringify([input.orders.map(function (o) { return [o.id, o.units.length, Math.round(o.units.reduce(function (s, u) { return s + u.weight; }, 0)), o.loc.key]; }), input.vehicles.map(function (v) { return [v.id, v.L, v.W, v.H, v.payload]; }), input.constraints]);
+  }
+
   function attachCtx(plan, b, objective) {
     const locs = {};
     b.input.orders.forEach(function (o) { locs[o.loc.key] = o.loc; });
     plan.ctx = { locs: locs, depot: b.input.depot, settings: b.input.settings, vehicles: b.input.vehicles };
     plan.skipped = b.skipped;
+    plan.sig = sigOf(b.input);
     plan.objective = objective || plan.objective;
     return plan;
   }
@@ -3159,6 +3165,13 @@ const View3D = (function () {
     t.stops.forEach(function (s) {
       const row = el('tr', { class: 'dragrow', draggable: 'true', title: 'Kéo sang chuyến khác để chuyển điểm giao này' }, el('td', { class: 'num' }, '⠿ ' + s.seq), el('td', null, s.customers.join(', '), el('div', { class: 'sub' }, [s.region, s.address].filter(Boolean).join(' – ') || 'chưa có địa chỉ')),
         el('td', { class: 'num' }, nf(s.blocks, 0)), el('td', { class: 'num' }, X.fmt.kg(s.kg)), el('td', { class: 'num' }, nf(s.legKm, 0) + ' km'));
+      if (P.ctx) {
+        const mv = el('select', { title: 'Chuyển điểm giao này sang chuyến khác (dùng khi không kéo thả được, ví dụ trên điện thoại)', onchange: function () { if (mv.value) moveStop(t.no, s.locKey, mv.value === 'new' ? 'new' : Number(mv.value)); } },
+          el('option', { value: '' }, 'Chuyển tới…'),
+          P.trips.filter(function (x) { return x.no !== t.no; }).map(function (x) { return el('option', { value: String(x.no) }, 'Chuyến ' + x.no); }),
+          el('option', { value: 'new' }, 'Chuyến mới'));
+        row.appendChild(el('td', null, mv));
+      }
       row.addEventListener('dragstart', function (ev) { ev.dataTransfer.setData('text/plain', JSON.stringify({ no: t.no, loc: s.locKey })); ev.dataTransfer.effectAllowed = 'move'; });
       lines.push(row);
     });
@@ -3179,7 +3192,7 @@ const View3D = (function () {
       el('div', { class: 'toolbar' }, el('h3', null, 'Chuyến ' + t.no + ': ' + veh.name), el('span', { class: 'spacer' }), vehSel, openBtn),
       el('div', { class: 'hint' }, t.summary + ' · ' + nf(t.distanceKm, 0) + ' km · ' + (t.cost === null ? 'chưa có cước' : nf(t.cost, 0) + ' đ')),
       el('div', { class: 'tablewrap' }, el('table', null,
-        el('thead', null, el('tr', null, ['Thứ tự', 'Khách / điểm giao', 'Số khối', 'Khối lượng', 'Quãng đường tới điểm'].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, lines))),
+        el('thead', null, el('tr', null, ['Thứ tự', 'Khách / điểm giao', 'Số khối', 'Khối lượng', 'Quãng đường tới điểm', ''].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, lines))),
       t.notes.map(function (n) { return el('div', { class: 'note ok' }, n); }),
       t.warnings.map(function (n) { return el('div', { class: 'note warn' }, n); }),
       t.pack.unplaced && t.pack.unplaced.length ? el('div', { class: 'note err' }, nf(t.pack.unplaced.length, 0) + ' khối chưa xếp được vào chuyến này (thử đổi xe lớn hơn hoặc kéo bớt điểm giao sang chuyến khác).') : null);
@@ -3241,6 +3254,7 @@ const View3D = (function () {
     const box = el('div', { class: 'results' });
     if (running) return box;
     if (!P) return box.appendChild(el('div', { class: 'empty' }, 'Chưa có kế hoạch. Bấm "Lập kế hoạch chuyến".')), box;
+    if (P.sig && sigOf(buildInput().input) !== P.sig) box.appendChild(el('div', { class: 'note warn' }, 'Đơn hàng, xe hoặc ràng buộc đã thay đổi sau khi lập kế hoạch này. Bấm "Lập kế hoạch chuyến" để tính lại.'));
     if (P.stopped) box.appendChild(el('div', { class: 'note warn' }, 'Đã dừng sớm: đây là phương án tốt nhất tìm được tới lúc dừng, có thể chưa tối ưu.'));
     (P.skipped || []).forEach(function (m) { box.appendChild(el('div', { class: 'note warn' }, 'Bỏ qua: ' + m)); });
     (P.warnings || []).forEach(function (m) { box.appendChild(el('div', { class: 'note warn' }, m)); });

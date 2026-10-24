@@ -172,5 +172,16 @@ test('dựng lại chuyến sau khi kéo thả: chuyển một điểm giao sang
   assert.strictEqual(tt.vehicles, 1);
 });
 
+test('hiệu năng: 48 đơn (nhân từ 8 đơn mẫu) gom xong dưới 20 giây, không mất khối', () => {
+  const big = [];
+  for (let i = 0; i < 6; i++) orders8.forEach((o) => big.push(Object.assign({}, o, { id: o.id + '_' + i, units: o.units.map((u) => Object.assign({}, u, { id: o.id + '_' + i + '|' + u.id })) })));
+  const t0 = Date.now();
+  const p = run(big, { budgetMs: 6000 });
+  const ms = Date.now() - t0;
+  allUnitsPlaced(p, big);
+  assert.ok(ms < 20000, 'mất ' + ms + ' ms');
+  assert.strictEqual(p.trips.reduce((s, t) => s + t.pack.unplaced.length, 0), 0, 'chuyến còn khối chưa xếp');
+});
+
 console.log(report.join('\n'));
 console.log('\n' + passed + ' kiểm thử đạt' + (process.exitCode ? ', CÓ LỖI' : ''));
