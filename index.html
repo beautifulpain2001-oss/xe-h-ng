@@ -78,6 +78,21 @@ h3,h4{margin:12px 0 6px}
 .cogbar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px}
 .lg i.free{background:#2ca02c55}
 tr.relaxed td{background:#fff3e0}
+/* GĐ3: đơn hàng và kế hoạch chuyến */
+.tall2{max-height:420px;overflow:auto}
+.notesbox,.depot{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0}
+.notesbox summary,.depot summary{cursor:pointer;font-weight:600}
+.grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px;margin:8px 0}
+label.inline{display:inline-flex;gap:6px;align-items:center}
+.mapbox{height:300px;border:1px solid var(--line);border-radius:8px;margin:8px 0}
+.cpanel{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:10px 0}
+.cpanel h3{margin:4px 0 8px}
+.cards4{grid-template-columns:repeat(4,1fr)}
+@media(max-width:800px){.cards4{grid-template-columns:repeat(2,1fr)}}
+.card .big{font-size:20px;font-weight:700}
+.trip{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:12px 0}
+.trip h3{margin:4px 0}
+progress{width:260px}
 
 </style>
 </head>
@@ -88,17 +103,24 @@ tr.relaxed td{background:#fff3e0}
     <button class="tabbtn active" data-tab="products">1. Sản phẩm</button>
     <button class="tabbtn" data-tab="vehicles">2. Xe</button>
     <button class="tabbtn" data-tab="pack">3. Xếp thử một xe</button>
+    <button class="tabbtn" data-tab="orders">4. Đơn hàng</button>
+    <button class="tabbtn" data-tab="trips">5. Kế hoạch chuyến</button>
   </nav>
 </header>
 <main>
   <section class="tab" id="tab-products"></section>
   <section class="tab" id="tab-vehicles" hidden></section>
   <section class="tab" id="tab-pack" hidden></section>
+  <section class="tab" id="tab-orders" hidden></section>
+  <section class="tab" id="tab-trips" hidden></section>
 </main>
 <dialog id="dlg"></dialog>
 <div id="toast"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <!-- Mô hình dữ liệu + bộ giải: cũng được nạp vào Web Worker -->
 <script id="pure-src">
 /* MÔ HÌNH DỮ LIỆU: tạo đối tượng mặc định, đổi đơn vị, kiểm tra dữ liệu nhập.
@@ -129,7 +151,71 @@ const Model = (function () {
       gap: 0,            // mm, khe hở giữa các khối khi xếp lên xe
       looseMaxH: 1000,   // mm, chiều cao tối đa một khối ống rời
       looseWidth: 1200,  // mm, chiều rộng tối đa một khối ống rời
+      roadFactor: 1.3,   // hệ số đường: quãng đường thực ≈ đường chim bay × hệ số (ước tính)
+      matrixText: '',    // khoảng cách nhập tay, mỗi dòng "khu vực A, khu vực B, km"
     };
+  }
+
+  function defaultDepot() {
+    return { name: 'Kho / nhà máy', address: '', lat: '', lng: '', region: '' };
+  }
+
+  function newOrder(o) {
+    return Object.assign({
+      id: uid('o'), no: '', customer: '', address: '', lat: '', lng: '', region: '',
+      date: '', from: '', to: '', note: '', include: true, pickup: false, lines: [],
+    }, o || {});
+  }
+
+  function normText(s) {
+    return String(s === undefined || s === null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().trim();
+  }
+
+  // Vị trí giao của đơn: có tọa độ thì khóa theo tọa độ, không thì theo tên khách (mỗi khách một điểm).
+  function orderLoc(o) {
+    const lat = num(o.lat), lng = num(o.lng);
+    const loc = { region: String(o.region || '').trim(), address: String(o.address || '').trim() };
+    if (isFinite(lat) && isFinite(lng)) {
+      loc.lat = lat; loc.lng = lng;
+      loc.key = 'll:' + lat.toFixed(4) + ',' + lng.toFixed(4);
+    } else {
+      loc.key = 'c:' + normText(o.customer || o.id);
+    }
+    return loc;
+  }
+
+  function validateOrder(o) {
+    const errors = [], warnings = [];
+    if (!String(o.customer || '').trim()) errors.push('Chưa nhập tên khách hàng.');
+    const la = String(o.lat).trim(), lo = String(o.lng).trim();
+    if (la !== '' || lo !== '') {
+      const lat = num(o.lat), lng = num(o.lng);
+      if (!isFinite(lat) || !isFinite(lng)) errors.push('Tọa độ phải nhập đủ cả vĩ độ và kinh độ bằng số (ví dụ 21,18 và 106,07).');
+      else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) errors.push('Tọa độ ngoài phạm vi hợp lệ. Vĩ độ từ -90 đến 90, kinh độ từ -180 đến 180. Có thể bạn nhập ngược vĩ độ và kinh độ.');
+      else if (lat > 30 || lat < 5 || lng < 95 || lng > 115) warnings.push('Tọa độ nằm ngoài khu vực Việt Nam. Kiểm tra lại có nhập ngược vĩ độ và kinh độ không.');
+    } else if (!String(o.region || '').trim()) {
+      warnings.push('Chưa có tọa độ hoặc khu vực: khoảng cách đến đơn này chỉ là ước tính.');
+    }
+    if (!(o.lines && o.lines.length)) errors.push('Đơn chưa có dòng hàng nào.');
+    (o.lines || []).forEach(function (l, i) {
+      const q = num(l.qty);
+      if (!String(l.code || '').trim()) errors.push('Dòng hàng ' + (i + 1) + ' chưa chọn mã hàng.');
+      if (!(q >= 1) || Math.floor(q) !== q) errors.push('Dòng hàng ' + (i + 1) + ': số lượng ống phải là số nguyên từ 1 trở lên.');
+    });
+    return { errors: errors, warnings: warnings };
+  }
+
+  // Phân tích khoảng cách nhập tay: mỗi dòng "A, B, km". Trả {list, errors}.
+  function parseMatrix(text) {
+    const list = [], errors = [];
+    String(text || '').split(/\r?\n/).forEach(function (line, i) {
+      if (!line.trim()) return;
+      const m = line.match(/^([^,;\t]+)[,;\t]([^,;\t]+)[,;\t](.+)$/);
+      const km = m ? num(m[3]) : NaN;
+      if (!m || !m[1].trim() || !m[2].trim() || !(km >= 0)) errors.push('Dòng ' + (i + 1) + ' không đúng dạng "khu vực A, khu vực B, km": ' + line.trim());
+      else list.push({ a: m[1].trim(), b: m[2].trim(), km: km });
+    });
+    return { list: list, errors: errors };
   }
 
   function newProduct(o) {
@@ -137,7 +223,7 @@ const Model = (function () {
       id: uid('p'), code: '', name: '', customer: '', qty: '',
       unit: 'mm', L: '', sizeMode: 'radius', size: '',
       weightMode: 'thickness', T: '', kg: '',
-      orient: 'stand', stackable: false, maxTiers: 2, maxLoad: 500, nestable: false, stop: '',
+      orient: 'stand', stackable: false, maxTiers: 2, maxLoad: 500, nestable: false, stop: '', auto: false, guess: '',
       packType: 'pallet', perUnit: '',
       palL: 1200, palW: 1000, palH: 150, palKg: 20, maxH: 1800,
       bunL: '', bunW: '', bunH: '', bunKg: 0,
@@ -306,7 +392,7 @@ const Model = (function () {
     return { errors: errors, warnings: warnings, n: n };
   }
 
-  const api = { UNIT_MM: UNIT_MM, uid: uid, num: num, defaultSettings: defaultSettings, newProduct: newProduct, newVehicle: newVehicle, prepareProduct: prepareProduct, prepareVehicle: prepareVehicle };
+  const api = { UNIT_MM: UNIT_MM, uid: uid, num: num, normText: normText, defaultDepot: defaultDepot, newOrder: newOrder, orderLoc: orderLoc, validateOrder: validateOrder, parseMatrix: parseMatrix, defaultSettings: defaultSettings, newProduct: newProduct, newVehicle: newVehicle, prepareProduct: prepareProduct, prepareVehicle: prepareVehicle };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;
 })();
@@ -719,7 +805,7 @@ const Solver = (function () {
       [0, 2, 1].forEach(function (score) { [false, true].forEach(function (rotFirst) { runs.push({ order: o, rotFirst: rotFirst, score: score }); }); });
     });
     // Dữ liệu lớn: giảm số cấu hình để giữ tốc độ.
-    const budget = cand.length > 400 ? 6 : cand.length > 200 ? 12 : runs.length;
+    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 12 : runs.length;
     const totalVol = V.L * V.W * V.H;
     let best = null;
     const chosen = runs.filter(function (cf) { return !cf.late; }).slice(0, budget).concat(runs.filter(function (cf) { return cf.late; }));
@@ -825,6 +911,692 @@ const Solver = (function () {
     analyzeProduct: analyzeProduct, layoutInfo: layoutInfo, tubePositions: tubePositions,
     bestStandLayer: bestStandLayer, packVehicle: packVehicle, verifyPlacement: verifyPlacement, unloadViolations: unloadViolations,
   };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  return api;
+})();
+
+/* BỘ GOM ĐƠN VÀ CHỌN XE: chia các đơn thành chuyến, chọn loại xe, sắp thứ tự giao, rồi kiểm tra xếp được thật bằng Solver.
+ * Không dùng DOM nên chạy được trong Web Worker và Node.
+ *
+ * Quy trình: (1) tách đơn quá lớn; (2) ghép đơn bắt buộc đi chung; (3) gom bằng thuật toán savings (Clarke–Wright) theo mục tiêu;
+ * (4) với mỗi chuyến chọn xe nhỏ/rẻ nhất xếp được thật, sửa chuyến không xếp vừa; (5) cải thiện cục bộ (ghép chuyến, chuyển đơn)
+ * trong giới hạn thời gian, có thể dừng giữa chừng và lấy phương án tốt nhất hiện có; (6) xếp lần cuối ở chất lượng cao. */
+const Planner = (function () {
+  const S = (typeof Solver !== 'undefined') ? Solver : require('./solver.js');
+  const FALLBACK_KM = 60;
+  const SAME_REGION_KM = 5;
+  const PROXY_FILL = 0.92;   // ước lượng sơ bộ: xe đầy tối đa 92% thể tích bao khối
+  const EPS = 1e-6;
+
+  const isNum = function (v) { return typeof v === 'number' && isFinite(v); };
+  const fkm = function (x) { return x.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + ' km'; };
+  const fpct = function (x) { return x.toLocaleString('vi-VN', { maximumFractionDigits: 0 }) + '%'; };
+
+  function haversine(a, b) {
+    const R = 6371, rad = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * rad, dLng = (b.lng - a.lng) * rad;
+    const h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+    return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+  }
+
+  /* Khoảng cách giữa hai điểm (km): ma trận nhập tay > tọa độ (đường chim bay × hệ số đường) > cùng khu vực > ước tính cố định.
+   * flags.estimated = true khi phải dùng ước tính cố định. */
+  function makeDistance(settings, flags) {
+    const rf = settings.roadFactor > 0 ? settings.roadFactor : 1.3;
+    const matrix = new Map();
+    (settings.matrix || []).forEach(function (m) { matrix.set(m.a + '|' + m.b, m.km); matrix.set(m.b + '|' + m.a, m.km); });
+    const memo = new Map();
+    return function dist(p, q) {
+      if (p.key === q.key) return 0;
+      const k = p.key + '>' + q.key;
+      if (memo.has(k)) return memo.get(k);
+      let d;
+      if (p.region && q.region && matrix.has(p.region + '|' + q.region)) d = matrix.get(p.region + '|' + q.region);
+      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = haversine(p, q) * rf;
+      else if (p.region && q.region && p.region === q.region) d = SAME_REGION_KM;
+      else { d = FALLBACK_KM; if (flags) flags.estimated = true; }
+      memo.set(k, d); memo.set(q.key + '>' + p.key, d);
+      return d;
+    };
+  }
+
+  /* ---------- Thứ tự giao trong một chuyến ---------- */
+
+  function tourLength(seq, depot, dist) {
+    if (!seq.length) return 0;
+    let t = dist(depot, seq[0]);
+    for (let i = 1; i < seq.length; i++) t += dist(seq[i - 1], seq[i]);
+    return t + dist(seq[seq.length - 1], depot);
+  }
+
+  // Láng giềng gần nhất rồi cải thiện 2-opt. firstKey: điểm bắt buộc giao đầu tiên.
+  function sequence(points, depot, dist, firstKey) {
+    if (points.length <= 1) return points.slice();
+    const rest = points.slice();
+    const seq = [];
+    if (firstKey) {
+      const i = rest.findIndex(function (p) { return p.key === firstKey; });
+      if (i >= 0) seq.push(rest.splice(i, 1)[0]);
+    }
+    let cur = seq.length ? seq[0] : depot;
+    while (rest.length) {
+      let bi = 0;
+      for (let i = 1; i < rest.length; i++) if (dist(cur, rest[i]) < dist(cur, rest[bi])) bi = i;
+      cur = rest.splice(bi, 1)[0];
+      seq.push(cur);
+    }
+    const lo = firstKey && seq.length && seq[0].key === firstKey ? 1 : 0;
+    let improved = true, guard = 0;
+    while (improved && guard++ < 50) {
+      improved = false;
+      for (let i = lo; i < seq.length - 1; i++) {
+        for (let j = i + 1; j < seq.length; j++) {
+          const a = i === 0 ? depot : seq[i - 1], b = seq[i], c = seq[j], d = j === seq.length - 1 ? depot : seq[j + 1];
+          if (dist(a, c) + dist(b, d) < dist(a, b) + dist(c, d) - 1e-9) {
+            const seg = seq.slice(i, j + 1).reverse();
+            for (let k = 0; k < seg.length; k++) seq[i + k] = seg[k];
+            improved = true;
+          }
+        }
+      }
+    }
+    return seq;
+  }
+
+  /* ---------- Bài toán ---------- */
+
+  function envelopeM3(units) { return units.reduce(function (s, u) { return s + (u.l * u.w * u.h) / 1e9; }, 0); }
+  function weightOf(units) { return units.reduce(function (s, u) { return s + u.weight; }, 0); }
+
+  function plan(input, hooks) {
+    hooks = hooks || {};
+    const t0 = Date.now();
+    const deadline = t0 + (input.budgetMs || 6000);
+    const settings = input.settings || {};
+    const gap = settings.gap || 0;
+    const flags = { estimated: false };
+    const dist = makeDistance(settings, flags);
+    const depot = input.depot;
+    const objective = input.objective || 'vehicles';
+    const vehicles = input.vehicles.filter(function (v) { return v.maxCount === null || v.maxCount === undefined || v.maxCount > 0; });
+    const warnings = [];
+    const unassigned = [];
+    const bySize = vehicles.slice().sort(function (a, b) { return a.volume - b.volume; });
+    const biggest = bySize[bySize.length - 1];
+    const costKnown = vehicles.length > 0 && vehicles.every(function (v) { return isNum(v.cost); });
+    const cons = input.constraints || [];
+    const nameOf = {};
+    input.orders.forEach(function (o) { nameOf[o.id] = o.name || o.customer || o.id; });
+    const log = [];
+    const reasonsOf = new Map(); // entity id -> lời giải thích gắn với chuyến chứa nó
+
+    if (!vehicles.length) return { trips: [], unassigned: input.orders.map(function (o) { return { orderId: o.id, name: nameOf[o.id], reason: 'Chưa chọn loại xe nào để dùng.' }; }), warnings: ['Chưa chọn loại xe nào để dùng.'], totals: null, estimatedDistance: false };
+
+    /* --- Thực thể gom: mỗi đơn là một thực thể (đơn lớn có thể tách thành nhiều phần) --- */
+    let entities = [];
+    input.orders.forEach(function (o) {
+      entities.push({ id: o.id, members: [o.id], name: nameOf[o.id], locs: [o.loc], units: o.units.map(function (u) { return Object.assign({}, u, { locKey: o.loc.key }); }), notes: [] });
+    });
+
+    const packCache = new Map();
+    function packRoute(units, veh, quick) {
+      const key = veh.id + '|' + units.map(function (u) { return u.id + ':' + u.stop; }).join(',') + '|' + (quick ? 'q' : 'f');
+      if (packCache.has(key)) return packCache.get(key);
+      const r = S.packVehicle(units, veh, { gap: gap, quick: quick, estimateExtra: !quick });
+      if (packCache.size > 4000) packCache.clear();
+      packCache.set(key, r);
+      return r;
+    }
+
+    // Tách một thực thể thành các phần, mỗi phần xếp vừa một xe lớn nhất. Trả {parts, rest (khối không xếp lọt)}.
+    function splitEntity(e) {
+      let rest = e.units.slice(), k = 0;
+      const parts = [];
+      for (let guard = 0; rest.length && guard < 60; guard++) {
+        const r = packRoute(rest.map(function (u) { return Object.assign({}, u, { stop: null }); }), biggest, true);
+        const placedIds = new Set(r.placements.map(function (p) { return p.uid; }));
+        if (!placedIds.size) break;
+        k++;
+        parts.push({ id: e.id + '~' + k, members: e.members, name: e.name + ' (phần ' + k + ')', locs: e.locs, units: rest.filter(function (u) { return placedIds.has(u.id); }), notes: [], splitOf: e.id });
+        rest = rest.filter(function (u) { return !placedIds.has(u.id); });
+      }
+      return { parts: parts, rest: rest };
+    }
+
+    /* (1) Tách đơn quá lớn so với xe lớn nhất */
+    const split = [];
+    entities.forEach(function (e) {
+      const big = weightOf(e.units) > biggest.payload || envelopeM3(e.units) > PROXY_FILL * biggest.volume;
+      if (!big) { split.push(e); return; }
+      const probe = packRoute(e.units.map(function (u) { return Object.assign({}, u, { stop: null }); }), biggest, true);
+      if (probe.unplaced.length === 0) { split.push(e); return; }
+      const sp = splitEntity(e);
+      const parts = sp.parts;
+      sp.rest.forEach(function (u) { unassigned.push({ orderId: e.id, name: e.name, reason: 'Khối ' + (u.code || u.name) + ' không xếp lọt vào xe lớn nhất (' + biggest.name + ').' }); });
+      parts.forEach(function (p) { p.notes.push('Đơn "' + e.name + '" lớn hơn một ' + biggest.name + ' nên được tách thành ' + parts.length + ' xe.'); split.push(p); });
+      if (parts.length > 1 && cons.some(function (c) { return c.type === 'together' && (c.a === e.id || c.b === e.id); })) {
+        warnings.push('Đơn "' + e.name + '" phải tách nhiều xe nên ràng buộc "đi chung" với đơn khác chỉ áp dụng được cho một phần.');
+      }
+    });
+    entities = split;
+
+    /* (2) Ràng buộc bắt buộc đi chung: gộp thành một thực thể */
+    cons.filter(function (c) { return c.type === 'together'; }).forEach(function (c) {
+      const A = entities.filter(function (e) { return e.members.indexOf(c.a) >= 0; });
+      const B = entities.filter(function (e) { return e.members.indexOf(c.b) >= 0; });
+      if (!A.length || !B.length) return;
+      const a = A[0], b = B[0];
+      if (a === b) return;
+      const m = { id: a.id + '+' + b.id, members: a.members.concat(b.members), name: a.name + ' + ' + b.name, locs: a.locs.concat(b.locs.filter(function (l) { return !a.locs.some(function (x) { return x.key === l.key; }); })), units: a.units.concat(b.units), notes: a.notes.concat(b.notes) };
+      m.notes.push('Đơn "' + nameOf[c.a] + '" bắt buộc đi chung đơn "' + nameOf[c.b] + '" theo ràng buộc anh đặt.');
+      entities = entities.filter(function (e) { return e !== a && e !== b; }).concat([m]);
+    });
+    if (objective === 'stops') {
+      // Ít điểm dừng nhất: các đơn cùng địa điểm giao đi chung một xe.
+      const byLoc = new Map();
+      entities.forEach(function (e) { if (e.locs.length === 1) { const k = e.locs[0].key; if (!byLoc.has(k)) byLoc.set(k, []); byLoc.get(k).push(e); } });
+      byLoc.forEach(function (list) {
+        if (list.length < 2) return;
+        const m = { id: list.map(function (e) { return e.id; }).join('+'), members: [].concat.apply([], list.map(function (e) { return e.members; })), name: list.map(function (e) { return e.name; }).join(' + '), locs: list[0].locs, units: [].concat.apply([], list.map(function (e) { return e.units; })), notes: [].concat.apply([], list.map(function (e) { return e.notes; })) };
+        m.notes.push('Các đơn cùng điểm giao được xếp chung một xe để giảm số điểm dừng.');
+        entities = entities.filter(function (e) { return list.indexOf(e) < 0; }).concat([m]);
+      });
+    }
+    const soloIds = new Set(cons.filter(function (c) { return c.type === 'solo'; }).map(function (c) { return c.a; }));
+    const firstOrder = new Map(); // orderId -> true
+    cons.filter(function (c) { return c.type === 'first'; }).forEach(function (c) { firstOrder.set(c.a, true); });
+    const apart = cons.filter(function (c) { return c.type === 'apart'; });
+
+    entities.forEach(function (e) {
+      e.members.forEach(function (m) {
+        if (soloIds.has(m)) e.notes.push('Đơn "' + nameOf[m] + '" đi xe riêng theo ràng buộc anh đặt.');
+        if (firstOrder.has(m)) e.notes.push('Điểm giao của "' + nameOf[m] + '" được giao đầu tiên theo ràng buộc anh đặt.');
+      });
+    });
+    const orderLoc = {};
+    input.orders.forEach(function (o) { orderLoc[o.id] = o.loc; });
+
+    function isSolo(e) { return e.members.some(function (m) { return soloIds.has(m); }); }
+    function firstKeyOf(entList) {
+      const keys = [];
+      entList.forEach(function (e) { e.members.forEach(function (m) { if (firstOrder.has(m)) keys.push(orderLoc[m].key); }); });
+      return keys;
+    }
+    function apartBlocked(r1, r2) {
+      const m1 = new Set(), m2 = new Set();
+      r1.entities.forEach(function (e) { e.members.forEach(function (m) { m1.add(m); }); });
+      r2.entities.forEach(function (e) { e.members.forEach(function (m) { m2.add(m); }); });
+      return apart.find(function (c) { return (m1.has(c.a) && m2.has(c.b)) || (m1.has(c.b) && m2.has(c.a)); }) || null;
+    }
+
+    /* --- Chuyến --- */
+    let rseq = 0;
+    function newRoute(ents) {
+      const notes = [];
+      ents.forEach(function (e) { e.notes.forEach(function (n) { if (notes.indexOf(n) < 0) notes.push(n); }); });
+      return { id: ++rseq, entities: ents, vehicle: null, pack: null, units: null, seq: null, dist: 0, notes: notes, key: null };
+    }
+    function pointsOf(ents) {
+      const seen = new Map();
+      ents.forEach(function (e) { e.locs.forEach(function (l) { if (!seen.has(l.key)) seen.set(l.key, l); }); });
+      return Array.from(seen.values());
+    }
+    // Tính thứ tự giao, quãng đường và gán số điểm giao vào từng khối hàng.
+    function layout(route) {
+      const pts = pointsOf(route.entities);
+      const fk = firstKeyOf(route.entities);
+      const seq = sequence(pts, depot, dist, fk.length ? fk[0] : null);
+      const idx = new Map();
+      seq.forEach(function (p, i) { idx.set(p.key, i + 1); });
+      const units = [];
+      route.entities.forEach(function (e) {
+        const stopKeyFor = function (u) { return u.locKey && idx.has(u.locKey) ? idx.get(u.locKey) : idx.get(e.locs[0].key); };
+        e.units.forEach(function (u) { units.push(Object.assign({}, u, { stop: stopKeyFor(u) })); });
+      });
+      route.seq = seq; route.units = units; route.dist = tourLength(seq, depot, dist);
+      route.vol = envelopeM3(units); route.weight = weightOf(units);
+      return route;
+    }
+
+    function usageOf(routes, except, veh) {
+      let n = 0;
+      routes.forEach(function (r) { if (r !== except && r.vehicle && r.vehicle.id === veh.id) n++; });
+      return n;
+    }
+    function typeOrder() {
+      if (objective === 'cost' && costKnown) return vehicles.slice().sort(function (a, b) { return a.cost - b.cost || a.volume - b.volume; });
+      return bySize;
+    }
+
+    // Chọn loại xe nhỏ nhất/rẻ nhất xếp được thật toàn bộ hàng của chuyến. Trả null nếu không loại nào đủ.
+    function chooseVehicle(route, routes, quick) {
+      const rejected = [];
+      const order = typeOrder();
+      for (let i = 0; i < order.length; i++) {
+        const v = order[i];
+        if (v.maxCount !== null && v.maxCount !== undefined && usageOf(routes, route, v) >= v.maxCount) { rejected.push(v.name + ': đã dùng hết số xe cho phép'); continue; }
+        if (route.weight > v.payload + EPS) { rejected.push(v.name + ': quá tải trọng'); continue; }
+        if (route.vol > v.volume + EPS) { rejected.push(v.name + ': thiếu thể tích'); continue; }
+        const r = packRoute(route.units, v, quick);
+        if (r.unplaced.length === 0) return { vehicle: v, pack: r, rejected: rejected };
+        rejected.push(v.name + ': không xếp vừa (còn ' + r.unplaced.length + ' khối)');
+      }
+      return { vehicle: null, pack: null, rejected: rejected };
+    }
+
+    /* --- Điểm số để so sánh phương án theo mục tiêu (nhỏ hơn là tốt hơn) --- */
+    function routeCost(r) {
+      if (r.vehicle && isNum(r.vehicle.cost)) return r.vehicle.cost;
+      return 0;
+    }
+    function scoreOf(routes) {
+      const nV = routes.length;
+      let d = 0, cost = 0, stops = 0, capacity = 0;
+      routes.forEach(function (r) { d += r.dist; cost += routeCost(r); stops += r.seq.length; capacity += r.vehicle ? r.vehicle.volume : 0; });
+      if (objective === 'distance') return d * 1e4 + nV * 10 + capacity * 0.01;
+      if (objective === 'cost') return (costKnown ? cost : capacity * 1000) * 1e3 + d;
+      if (objective === 'stops') return stops * 1e9 + nV * 1e6 + d * 1e2 + capacity;
+      return nV * 1e9 + d * 1e3 + capacity; // ít xe nhất
+    }
+
+    /* (3) Savings */
+    let routes = entities.map(function (e) { return layout(newRoute([e])); });
+    const maxVol = biggest.volume, maxPay = Math.max.apply(null, vehicles.map(function (v) { return v.payload; }));
+
+    function proxyScoreDelta(r1, r2, merged) {
+      // So sánh điểm số trước/sau khi ghép bằng ước lượng sơ bộ (chưa xếp thật).
+      const before = [r1, r2], after = [merged];
+      const proxyVeh = function (r) {
+        for (let i = 0; i < bySize.length; i++) { const v = bySize[i]; if (r.vol <= PROXY_FILL * v.volume && r.weight <= v.payload) return v; }
+        return biggest;
+      };
+      const tmp = function (list) {
+        return list.map(function (r) { return Object.assign({}, r, { vehicle: proxyVeh(r) }); });
+      };
+      return scoreOf(tmp(after)) - scoreOf(tmp(before));
+    }
+
+    function canMergeProxy(r1, r2) {
+      if (r1.entities.some(isSolo) || r2.entities.some(isSolo)) return false;
+      if (r1.vol + r2.vol > PROXY_FILL * maxVol + EPS || r1.weight + r2.weight > maxPay + EPS) return false;
+      if (apartBlocked(r1, r2)) return false;
+      if (firstKeyOf(r1.entities).length && firstKeyOf(r2.entities).length) return false;
+      return true;
+    }
+
+    const blockedLogged = new Set();
+    function minPointDist(r1, r2) {
+      let m = Infinity;
+      r1.seq.forEach(function (p) { r2.seq.forEach(function (q) { m = Math.min(m, dist(p, q)); }); });
+      return m;
+    }
+    function describeMerge(r1, r2, merged) {
+      const n1 = r1.entities.map(function (e) { return e.name; }).join(', '), n2 = r2.entities.map(function (e) { return e.name; }).join(', ');
+      const saved = r1.dist + r2.dist - merged.dist;
+      const d = minPointDist(r1, r2);
+      const regions = Array.from(new Set(pointsOf(merged.entities).map(function (p) { return p.region; }).filter(Boolean)));
+      const same = regions.length === 1 ? ' (cùng khu vực ' + regions[0] + ')' : '';
+      return 'Ghép "' + n1 + '" và "' + n2 + '" vì hai điểm giao cách nhau ' + fkm(d) + same + (saved > 0 ? ', gom chung tiết kiệm ' + fkm(saved) + ' so với đi riêng' : ', giúp giảm 1 xe');
+    }
+
+    for (let guard = 0; guard < 500; guard++) {
+      if (Date.now() > deadline || (hooks.cancelled && hooks.cancelled())) break;
+      const cand = [];
+      for (let i = 0; i < routes.length; i++) {
+        for (let j = i + 1; j < routes.length; j++) {
+          const a = routes[i], b = routes[j];
+          const blocker = apartBlocked(a, b);
+          if (blocker) {
+            const key = [blocker.a, blocker.b].sort().join('|');
+            if (!blockedLogged.has(key) && minPointDist(a, b) < FALLBACK_KM) {
+              blockedLogged.add(key);
+              const note = 'Không ghép "' + nameOf[blocker.a] + '" với "' + nameOf[blocker.b] + '" vì ràng buộc "không đi chung" anh đặt.';
+              a.notes.push(note);
+            }
+            continue;
+          }
+          if (!canMergeProxy(a, b)) continue;
+          cand.push({ i: i, j: j, d: minPointDist(a, b) });
+        }
+      }
+      if (!cand.length) break;
+      cand.sort(function (x, y) { return x.d - y.d; });
+      let best = null;
+      cand.slice(0, 14).forEach(function (c) {
+        const a = routes[c.i], b = routes[c.j];
+        const merged = layout(newRoute(a.entities.concat(b.entities)));
+        const delta = proxyScoreDelta(a, b, merged);
+        if (!best || delta < best.delta) best = { c: c, merged: merged, delta: delta };
+      });
+      if (!best || best.delta >= 0) break;
+      const a = routes[best.c.i], b = routes[best.c.j];
+      best.merged.notes = a.notes.concat(b.notes);
+      best.merged.notes.push(describeMerge(a, b, best.merged));
+      routes = routes.filter(function (r) { return r !== a && r !== b; }).concat([best.merged]);
+    }
+
+    /* (4) Chọn xe thật và sửa chuyến không xếp vừa */
+    function assign(rs, quick) {
+      const out = [];
+      const queue = rs.slice().sort(function (a, b) { return b.vol - a.vol; });
+      let guard = 0;
+      while (queue.length && guard++ < 400) {
+        const r = queue.shift();
+        const all = out.concat(queue);
+        const pick = chooseVehicle(r, all, quick);
+        if (pick.vehicle) {
+          r.vehicle = pick.vehicle; r.pack = pick.pack; r.rejected = pick.rejected;
+          out.push(r);
+          continue;
+        }
+        if (r.entities.length > 1) {
+          // Bỏ đơn "khó xếp" nhất ra thành chuyến riêng: đơn có thể tích lớn nhất.
+          const sorted = r.entities.slice().sort(function (a, b) { return envelopeM3(b.units) - envelopeM3(a.units); });
+          const out1 = sorted[0];
+          const left = layout(newRoute(r.entities.filter(function (e) { return e !== out1; })));
+          left.notes = r.notes.slice();
+          left.notes.push('Đã tách "' + out1.name + '" ra chuyến khác vì ghép chung không xếp vừa xe.');
+          const alone = layout(newRoute([out1]));
+          alone.notes = out1.notes.slice();
+          queue.unshift(left, alone);
+          continue;
+        }
+        if (r.entities.length === 1 && r.entities[0].units.length > 1 && !r.entities[0].splitOf) {
+          // Ước lượng thể tích sót: đơn thật ra lớn hơn một xe lớn nhất, tách thành nhiều xe.
+          const e = r.entities[0];
+          const sp = splitEntity(e);
+          if (sp.parts.length > 1) {
+            sp.parts.forEach(function (p) { p.notes.push('Đơn "' + e.name + '" lớn hơn một ' + biggest.name + ' nên được tách thành ' + sp.parts.length + ' xe.'); });
+            queue.unshift.apply(queue, sp.parts.map(function (p) { return layout(newRoute([p])); }));
+            sp.rest.forEach(function (u) { unassigned.push({ orderId: e.id, name: e.name, reason: 'Khối ' + (u.code || u.name) + ' không xếp lọt vào xe lớn nhất (' + biggest.name + ').' }); });
+            continue;
+          }
+        }
+        r.entities.forEach(function (e) { unassigned.push({ orderId: e.members[0], name: e.name, reason: 'Không có xe nào xếp vừa (' + (pick.rejected.join('; ') || 'không có xe khả dụng') + ').' }); });
+      }
+      return out;
+    }
+    routes = assign(routes, true);
+    let best = routes.map(function (r) { return r; });
+    let bestScore = scoreOf(best);
+    if (hooks.onProgress) hooks.onProgress({ phase: 'Đã có phương án đầu tiên', ratio: 0.5, plan: finalize(best, true) });
+
+    /* (5) Cải thiện cục bộ: ghép chuyến, chuyển đơn */
+    function tryAccept(newRoutes, why) {
+      const sc = scoreOf(newRoutes);
+      if (sc < bestScore - 1e-9) { best = newRoutes; bestScore = sc; if (hooks.onProgress) hooks.onProgress({ phase: why, ratio: 0.75, plan: finalize(best, true) }); return true; }
+      return false;
+    }
+    let improved = true;
+    while (improved && Date.now() < deadline && !(hooks.cancelled && hooks.cancelled())) {
+      improved = false;
+      // a) ghép hai chuyến nếu xếp vừa một xe và tốt hơn
+      outer: for (let i = 0; i < best.length; i++) {
+        for (let j = i + 1; j < best.length; j++) {
+          if (Date.now() > deadline) break outer;
+          const a = best[i], b = best[j];
+          if (a.entities.some(isSolo) || b.entities.some(isSolo) || apartBlocked(a, b)) continue;
+          if (firstKeyOf(a.entities).length && firstKeyOf(b.entities).length) continue;
+          const m = layout(newRoute(a.entities.concat(b.entities)));
+          if (m.weight > maxPay || m.vol > maxVol) continue;
+          const others = best.filter(function (r) { return r !== a && r !== b; });
+          const pick = chooseVehicle(m, others, true);
+          if (!pick.vehicle) continue;
+          m.vehicle = pick.vehicle; m.pack = pick.pack; m.rejected = pick.rejected;
+          m.notes = a.notes.concat(b.notes);
+          m.notes.push(describeMerge(a, b, m));
+          if (tryAccept(others.concat([m]), 'Ghép chuyến')) { improved = true; break outer; }
+        }
+      }
+      if (improved) continue;
+      // b) chuyển một đơn sang chuyến khác
+      outer2: for (let i = 0; i < best.length; i++) {
+        const src = best[i];
+        if (src.entities.length < 1) continue;
+        for (let ei = 0; ei < src.entities.length; ei++) {
+          const e = src.entities[ei];
+          if (isSolo(e)) continue;
+          const eRt = layout(newRoute([e]));
+          const dHome = minPointDist(eRt, src);
+          for (let j = 0; j < best.length; j++) {
+            if (i === j) continue;
+            if (Date.now() > deadline || (hooks.cancelled && hooks.cancelled())) break outer2;
+            const dst = best[j];
+            if (dst.entities.some(isSolo) || apartBlocked({ entities: [e] }, dst)) continue;
+            if (firstKeyOf([e]).length && firstKeyOf(dst.entities).length) continue;
+            if (dst.vol + envelopeM3(e.units) > maxVol * 1.0 || dst.weight + weightOf(e.units) > maxPay) continue;
+            if (minPointDist(eRt, dst) > 3 * Math.max(10, dHome)) continue;
+            const others = best.filter(function (r) { return r !== src && r !== dst; });
+            const newDst = layout(newRoute(dst.entities.concat([e])));
+            const pd = chooseVehicle(newDst, others, true);
+            if (!pd.vehicle) continue;
+            newDst.vehicle = pd.vehicle; newDst.pack = pd.pack; newDst.rejected = pd.rejected;
+            newDst.notes = dst.notes.slice();
+            newDst.notes.push('Chuyển "' + e.name + '" sang chuyến này vì gần các điểm giao khác trong chuyến hơn (cải thiện ' + (objective === 'distance' ? 'quãng đường' : objective === 'cost' ? 'chi phí' : 'số xe / quãng đường') + ').');
+            const rest = src.entities.filter(function (x) { return x !== e; });
+            let list = others.concat([newDst]);
+            if (rest.length) {
+              const newSrc = layout(newRoute(rest));
+              const ps = chooseVehicle(newSrc, list, true);
+              if (!ps.vehicle) continue;
+              newSrc.vehicle = ps.vehicle; newSrc.pack = ps.pack; newSrc.rejected = ps.rejected; newSrc.notes = src.notes.slice();
+              list = list.concat([newSrc]);
+            }
+            if (tryAccept(list, 'Chuyển đơn giữa các chuyến')) { improved = true; break outer2; }
+          }
+        }
+      }
+    }
+
+    /* (6) Xếp lần cuối ở chất lượng cao và dựng kết quả */
+    const result = finalize(best, false);
+    result.unassigned = unassigned;
+    result.warnings = warnings.concat(result.warnings);
+    result.log = log;
+    result.elapsedMs = Date.now() - t0;
+    result.objective = objective;
+    result.estimatedDistance = flags.estimated;
+    if (flags.estimated) result.warnings.push('Một số khoảng cách không có tọa độ hoặc khu vực nên được ước tính ' + FALLBACK_KM + ' km. Bổ sung tọa độ/khu vực để gom chính xác hơn.');
+    return result;
+
+    function finalize(rs, quick) {
+      const trips = rs.slice().sort(function (a, b) { return b.vol - a.vol; }).map(function (r, k) {
+        const pack = quick ? r.pack : packRoute(r.units, r.vehicle, false);
+        const m = pack.metrics;
+        const stops = r.seq.map(function (p, i) {
+          const ents = r.entities.filter(function (e) { return e.locs.some(function (l) { return l.key === p.key; }); });
+          const us = r.units.filter(function (u) { return u.stop === i + 1; });
+          return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', customers: Array.from(new Set(ents.map(function (e) { return e.name; }))), orderIds: Array.from(new Set([].concat.apply([], ents.map(function (e) { return e.members; })))), kg: weightOf(us), blocks: us.length, legKm: i === 0 ? dist(depot, p) : dist(r.seq[i - 1], p) };
+        });
+        const notes = r.notes.slice();
+        const head = r.vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng';
+        const rej = (r.rejected || []).filter(function (x) { return /không xếp vừa|thiếu thể tích|quá tải/.test(x); });
+        if (rej.length) notes.push('Chọn ' + r.vehicle.name + ' vì xe nhỏ hơn không đủ (' + rej.join('; ') + ').');
+        if (r.entities.length === 1 && r.seq.length === 1 && rs.length > 1 && !r.notes.length) notes.push('Đi riêng vì không có điểm giao nào gần hoặc đủ chỗ để ghép chung.');
+        return {
+          no: k + 1, vehicle: r.vehicle, pack: pack, units: r.units, stops: stops, distanceKm: r.dist,
+          cost: isNum(r.vehicle.cost) ? r.vehicle.cost : null, summary: head, notes: notes, orders: Array.from(new Set([].concat.apply([], r.entities.map(function (e) { return e.members; })))),
+          volumePct: m.volumePct, weightPct: m.weightPct, warnings: pack.warnings.slice(),
+        };
+      });
+      let totalKm = 0, totalCost = 0, costKnownAll = true, stopsN = 0;
+      trips.forEach(function (t) { totalKm += t.distanceKm; if (t.cost === null) costKnownAll = false; else totalCost += t.cost; stopsN += t.stops.length; });
+      return {
+        trips: trips, unassigned: unassigned.slice(), warnings: [],
+        totals: { vehicles: trips.length, distanceKm: totalKm, cost: costKnownAll ? totalCost : null, stops: stopsN, avgVolumePct: trips.length ? trips.reduce(function (s, t) { return s + t.volumePct; }, 0) / trips.length : 0 },
+      };
+    }
+  }
+
+  const api = { plan: plan, makeDistance: makeDistance, sequence: sequence, tourLength: tourLength, haversine: haversine };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  return api;
+})();
+
+/* NHẬP ĐƠN TỪ EXCEL/CSV: nhận bảng dạng mảng các dòng, đoán cột, gom dòng hàng thành đơn theo khách.
+ * Không dùng DOM nên kiểm thử được bằng Node. Bước đọc file Excel (SheetJS) nằm ở lớp giao diện. */
+const Importer = (function () {
+  const M = (typeof Model !== 'undefined') ? Model : require('./model.js');
+  const norm = M.normText;
+
+  // Mỗi trường: [khóa, nhãn hiển thị, các từ khóa tiêu đề theo thứ tự ưu tiên (đã bỏ dấu)]
+  const FIELDS = [
+    ['customer', 'Khách hàng', ['ten khach hang', 'khach hang', 'ten khach']],
+    ['code', 'Mã hàng', ['ma hang', 'ma san pham', 'ma sp']],
+    ['qty', 'Số lượng ống', ['sl con lai', 'so luong', 'sl giao', 'sl']],
+    ['pname', 'Tên hàng', ['ten hang', 'ten san pham']],
+    ['no', 'Số đơn hàng', ['so don hang', 'don hang ban', 'so don']],
+    ['address', 'Địa chỉ giao', ['dia chi']],
+    ['region', 'Khu vực (tỉnh/huyện/KCN)', ['khu vuc', 'tinh', 'huyen', 'kcn']],
+    ['lat', 'Vĩ độ', ['vi do', 'lat']],
+    ['lng', 'Kinh độ', ['kinh do', 'lng', 'long']],
+    ['date', 'Ngày giao', ['ngay giao']],
+    ['vehicle', 'Xe giao hàng', ['xe giao hang', 'xe']],
+    ['note', 'Ghi chú', ['note', 'ghi chu']],
+  ];
+
+  const cellText = function (c) { return c === undefined || c === null ? '' : String(c).trim(); };
+
+  // Dòng tiêu đề = dòng trong 30 dòng đầu có nhiều ô khớp từ khóa nhất.
+  function findHeader(rows) {
+    let best = -1, bestScore = 1;
+    for (let i = 0; i < Math.min(30, rows.length); i++) {
+      const cells = rows[i].map(function (c) { return norm(cellText(c)); });
+      let score = 0;
+      FIELDS.forEach(function (f) { if (cells.some(function (c) { return c && f[2].some(function (k) { return c.indexOf(k) >= 0; }); })) score++; });
+      if (score > bestScore) { best = i; bestScore = score; }
+    }
+    return best;
+  }
+
+  // Trả {khóa trường: chỉ số cột hoặc -1}.
+  function guessMapping(headers) {
+    const used = new Set();
+    const map = {};
+    const hn = headers.map(function (h) { return norm(cellText(h)); });
+    FIELDS.forEach(function (f) {
+      map[f[0]] = -1;
+      for (let k = 0; k < f[2].length && map[f[0]] < 0; k++) {
+        for (let c = 0; c < hn.length; c++) {
+          if (!used.has(c) && hn[c] && hn[c].indexOf(f[2][k]) >= 0) { map[f[0]] = c; used.add(c); break; }
+        }
+      }
+    });
+    return map;
+  }
+
+  function findDate(rows) {
+    for (let i = 0; i < Math.min(15, rows.length); i++) {
+      for (let j = 0; j < rows[i].length; j++) {
+        const m = cellText(rows[i][j]).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m) return m[3] + '-' + ('0' + m[2]).slice(-2) + '-' + ('0' + m[1]).slice(-2);
+      }
+    }
+    return '';
+  }
+
+  /* Đoán kích thước ống từ tên hàng. Chỉ là gợi ý, luôn cần người dùng kiểm tra.
+   * Quy ước đoán: "ống A x B x C": nếu C có đơn vị g/kg thì A = đường kính ngoài, B = dài, C = khối lượng;
+   * nếu B có tiền tố N (ống A x N B x C) thì A = đường kính trong, B = đường kính ngoài, C = dài;
+   * còn lại A = đường kính ngoài, B = độ dày thành, C = dài. */
+  function parseNameGuess(name) {
+    const n = cellText(name);
+    if (!/^o?ng\s/.test(norm(n))) return { ok: false, why: 'Không nhận ra đây là ống (tên không bắt đầu bằng "ống").' };
+    const re = /(N?\s*\d+(?:[.,]\d+)?)\s*x\s*(N?\s*\d+(?:[.,]\d+)?)\s*x\s*(N?\s*\d+(?:[.,]\d+)?)\s*(kg|g)?\b/i;
+    const m = n.match(re);
+    if (!m) return { ok: false, why: 'Không đọc được ba kích thước dạng A x B x C trong tên hàng.' };
+    const v = function (s) { return M.num(String(s).replace(/N/i, '').trim()); };
+    const nA = /N/i.test(m[1]), nB = /N/i.test(m[2]);
+    const a = v(m[1]), b = v(m[2]), c = v(m[3]);
+    const unit = m[4] ? m[4].toLowerCase() : '';
+    if (!(a > 0) || !(b > 0) || !(c > 0)) return { ok: false, why: 'Kích thước trong tên hàng không hợp lệ.' };
+    let g;
+    if (unit) {
+      g = { size: a / 2, L: b, kg: unit === 'g' ? c / 1000 : c, weightMode: 'kg', text: 'đường kính ngoài ' + a + ' mm, dài ' + b + ' mm, nặng ' + c + ' ' + unit };
+    } else if (nB && !nA) {
+      const T = (b - a) / 2;
+      if (!(T > 0)) return { ok: false, why: 'Đường kính ngoài phải lớn hơn đường kính trong.' };
+      g = { size: b / 2, L: c, T: T, weightMode: 'thickness', text: 'đường kính trong ' + a + ' mm, ngoài ' + b + ' mm (dày ' + T + ' mm), dài ' + c + ' mm' };
+    } else {
+      if (!(b < a / 2)) return { ok: false, why: 'Độ dày thành (' + b + ' mm) không nhỏ hơn bán kính (' + a / 2 + ' mm), có thể tên hàng theo quy ước khác.' };
+      g = { size: a / 2, L: c, T: b, weightMode: 'thickness', text: 'đường kính ngoài ' + a + ' mm, dày thành ' + b + ' mm, dài ' + c + ' mm' };
+    }
+    g.ok = true;
+    return g;
+  }
+
+  /* rows: mảng các dòng (mảng ô). headerIdx: dòng tiêu đề. map: {khóa: cột}. existing: danh sách sản phẩm đã có.
+   * Trả {orders, newProducts, stats}. Khách để trống được hiểu là cùng khách với dòng phía trên (ô gộp trong Excel). */
+  function buildOrders(rows, headerIdx, map, existing, opts) {
+    opts = opts || {};
+    const get = function (r, key) { return map[key] >= 0 && map[key] !== undefined ? r[map[key]] : ''; };
+    const known = new Map();
+    existing.forEach(function (p) { known.set(norm(p.code), p); });
+    const date = findDate(rows.slice(0, headerIdx + 1));
+    const stats = { rows: 0, skippedZero: 0, skippedNoCode: 0, skippedNoCustomer: 0, pickup: 0, unknownCodes: [], guessed: 0, notGuessed: 0 };
+    const groups = new Map();
+    let curCustomer = '', curAddress = '', curRegion = '', curLat = '', curLng = '';
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || !r.some(function (c) { return cellText(c) !== ''; })) continue;
+      const cust = cellText(get(r, 'customer'));
+      if (cust) { curCustomer = cust; curAddress = cellText(get(r, 'address')); curRegion = cellText(get(r, 'region')); curLat = cellText(get(r, 'lat')); curLng = cellText(get(r, 'lng')); }
+      const code = cellText(get(r, 'code'));
+      if (!code) { stats.skippedNoCode++; continue; }
+      stats.rows++;
+      if (!curCustomer) { stats.skippedNoCustomer++; continue; }
+      const q = M.num(get(r, 'qty'));
+      if (!(q > 0)) { stats.skippedZero++; continue; }
+      const key = norm(curCustomer);
+      if (!groups.has(key)) groups.set(key, { customer: curCustomer, address: curAddress, region: curRegion, lat: curLat, lng: curLng, nos: new Set(), notes: new Set(), vehicles: new Set(), lines: new Map() });
+      const g = groups.get(key);
+      const no = cellText(get(r, 'no'));
+      if (no) g.nos.add(no);
+      const note = cellText(get(r, 'note'));
+      if (note) g.notes.add(note.replace(/\s+/g, ' '));
+      const ve = cellText(get(r, 'vehicle'));
+      if (ve) g.vehicles.add(ve);
+      const ck = norm(code);
+      if (!g.lines.has(ck)) g.lines.set(ck, { code: code, qty: 0, name: cellText(get(r, 'pname')) });
+      g.lines.get(ck).qty += Math.round(q);
+    }
+    const newProducts = new Map();
+    const orders = [];
+    groups.forEach(function (g) {
+      const lines = [];
+      g.lines.forEach(function (l, ck) {
+        lines.push({ code: l.code, qty: l.qty });
+        if (!known.has(ck) && !newProducts.has(ck)) {
+          const guess = parseNameGuess(l.name);
+          const base = { code: l.code, name: l.name, qty: 1, auto: true, packType: 'loose', orient: 'lay', unit: 'mm', stackable: true, maxTiers: 4, maxLoad: 1000 };
+          let p;
+          if (guess.ok) {
+            stats.guessed++;
+            p = M.newProduct(Object.assign(base, { L: guess.L, sizeMode: 'radius', size: guess.size, weightMode: guess.weightMode, T: guess.T === undefined ? '' : guess.T, kg: guess.kg === undefined ? '' : guess.kg, guess: 'Gợi ý từ tên hàng: ' + guess.text + '. Quy cách đóng gói chưa biết nên tạm tính là hàng rời xếp nằm, cho chồng tối đa 4 tầng (chịu tải 1000 kg).' }));
+          } else {
+            stats.notGuessed++;
+            p = M.newProduct(Object.assign(base, { guess: 'Chưa đoán được kích thước từ tên hàng. ' + guess.why }));
+          }
+          newProducts.set(ck, p);
+          stats.unknownCodes.push(l.code);
+        }
+      });
+      const pickup = Array.from(g.vehicles).some(function (v) { return /den lay/.test(norm(v)); });
+      if (pickup) stats.pickup++;
+      const nos = Array.from(g.nos);
+      const noteParts = [];
+      if (g.vehicles.size) noteParts.push('Xe: ' + Array.from(g.vehicles).join(' / '));
+      Array.from(g.notes).slice(0, 4).forEach(function (n) { noteParts.push(n); });
+      orders.push(M.newOrder({
+        no: nos.slice(0, 3).join(', ') + (nos.length > 3 ? ' (+' + (nos.length - 3) + ')' : ''),
+        customer: g.customer, address: g.address, region: g.region, lat: g.lat, lng: g.lng, date: date,
+        note: noteParts.join('; '), include: !pickup, pickup: pickup, lines: lines,
+      }));
+    });
+    return { orders: orders, newProducts: Array.from(newProducts.values()), stats: stats, date: date };
+  }
+
+  const api = { FIELDS: FIELDS, findHeader: findHeader, guessMapping: guessMapping, parseNameGuess: parseNameGuess, buildOrders: buildOrders, findDate: findDate };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;
 })();
@@ -1087,10 +1859,16 @@ const View3D = (function () {
     pct: function (x) { return nf(x, 1) + '%'; },
   };
 
-  /* ---------- Trạng thái và lưu trữ ---------- */
-  const state = { products: [], vehicles: [], settings: Model.defaultSettings(), vehId: null, scheme: 'code', detail: false, result: null, picked: null };
+  /* Cửa ngõ cho các tab khác (đơn hàng, kế hoạch chuyến) dùng chung trạng thái và tiện ích. */
+  const XEH = window.XEH = { tabs: {}, onInit: null };
 
-  function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify({ products: state.products, vehicles: state.vehicles, settings: state.settings })); } catch (e) { /* trình duyệt chặn lưu: bỏ qua */ } }
+  /* ---------- Trạng thái và lưu trữ ---------- */
+  const state = {
+    products: [], vehicles: [], settings: Model.defaultSettings(), vehId: null, scheme: 'code', detail: false, result: null, picked: null,
+    orders: [], depot: Model.defaultDepot(), constraints: [], plan: null, planOpts: { objective: 'vehicles', useVeh: {}, maxCount: {} },
+  };
+
+  function save() { try { localStorage.setItem(STORE_KEY, JSON.stringify({ products: state.products, vehicles: state.vehicles, settings: state.settings, orders: state.orders, depot: state.depot, constraints: state.constraints, planOpts: state.planOpts })); } catch (e) { /* trình duyệt chặn lưu: bỏ qua */ } }
   function load() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
@@ -1099,7 +1877,11 @@ const View3D = (function () {
       state.products = (d.products || []).map(function (p) { return Model.newProduct(p); });
       state.vehicles = (d.vehicles || []).map(function (v) { return Model.newVehicle(v); });
       state.settings = Object.assign(Model.defaultSettings(), d.settings || {});
-      return state.products.length + state.vehicles.length > 0;
+      state.orders = (d.orders || []).map(function (o) { return Model.newOrder(o); });
+      state.depot = Object.assign(Model.defaultDepot(), d.depot || {});
+      state.constraints = d.constraints || [];
+      state.planOpts = Object.assign({ objective: 'vehicles', useVeh: {}, maxCount: {} }, d.planOpts || {});
+      return state.products.length + state.vehicles.length + state.orders.length > 0;
     } catch (e) { return false; }
   }
 
@@ -1164,7 +1946,7 @@ const View3D = (function () {
       const a = analyze(p);
       const i = a.info;
       const unitWord = p.packType === 'bundle' ? 'kiện' : p.packType === 'loose' ? 'khối' : 'pallet';
-      const status = a.errors.length ? el('span', { class: 'tag err' }, 'Lỗi') : a.warnings.length ? el('span', { class: 'tag warn' }, 'Cần xem') : el('span', { class: 'tag ok' }, 'Hợp lệ');
+      const status = a.errors.length ? el('span', { class: 'tag err' }, 'Lỗi') : p.auto ? el('span', { class: 'tag warn' }, 'Tự tạo, cần kiểm tra') : a.warnings.length ? el('span', { class: 'tag warn' }, 'Cần xem') : el('span', { class: 'tag ok' }, 'Hợp lệ');
       tbody.appendChild(el('tr', null,
         el('td', null, el('b', null, p.code || ''), el('div', { class: 'sub' }, p.name || '')),
         el('td', null, String(p.stop || '').trim() ? 'Điểm ' + p.stop : '–', el('div', { class: 'sub' }, p.customer || '')),
@@ -1402,6 +2184,8 @@ const View3D = (function () {
     toast('Đã nạp dữ liệu mẫu (số liệu minh họa).');
   }
 
+  XEH.state = state; XEH.el = el; XEH.$ = $; XEH.nf = nf; XEH.fmt = fmt; XEH.toast = toast; XEH.save = save; XEH.analyze = analyze; XEH.showTab = showTab; XEH.openResult = openResult;
+
   /* ---------- Tab 3: Xếp thử một xe ---------- */
   let view = null;
   let worker = null;
@@ -1449,8 +2233,10 @@ const View3D = (function () {
     renderResults();
     buildPlayer();
     buildFilters();
+    if (view && state.result && lastDrawn !== state.result) redraw();
   }
 
+  let lastDrawn = null;
   function buildPackBar() {
     const bar = $('packbar');
     bar.textContent = '';
@@ -1526,6 +2312,7 @@ const View3D = (function () {
   function redraw() {
     const R = state.result;
     if (!view || !R) return;
+    lastDrawn = R;
     const legend = view.setScene({ vehicle: R.veh, placements: R.r.placements, unitsById: R.byId, scheme: state.scheme, detail: state.detail, cog: R.r.metrics.cog, freeLength: R.r.metrics.freeLength });
     view.setView('iso');
     view.setClip(vs.clipX, vs.clipY);
@@ -1685,7 +2472,7 @@ const View3D = (function () {
     }
     const m = R.r.metrics;
     const th = function (cols) { return el('thead', null, el('tr', null, cols.map(function (h) { return el('th', { text: h }); }))); };
-    host.appendChild(el('h3', null, 'Kết quả xếp: ' + R.vehName));
+    host.appendChild(el('h3', null, R.title || ('Kết quả xếp: ' + R.vehName)));
     host.appendChild(el('div', { class: 'cards' },
       card('Lấp đầy thể tích', fmt.pct(m.volumePct), nf(m.volumeM3, 2) + ' m³ hàng / ' + nf(R.veh.volume, 2) + ' m³ thùng'),
       card('Dùng tải trọng', fmt.pct(m.weightPct), fmt.kg(m.weightKg) + ' / ' + fmt.kg(R.veh.payload)),
@@ -1758,6 +2545,14 @@ const View3D = (function () {
     if (name === 'products') renderProducts();
     if (name === 'vehicles') renderVehicles();
     if (name === 'pack') renderPack();
+    if (XEH.tabs[name]) XEH.tabs[name]();
+  }
+
+  // Mở một kết quả xếp (ví dụ một chuyến trong kế hoạch) trong tab xem 3D.
+  function openResult(res) {
+    state.result = res; state.picked = null;
+    vs.anim = null; vs.hiddenCust.clear(); vs.hiddenStop.clear();
+    showTab('pack');
   }
 
   function init() {
@@ -1765,8 +2560,527 @@ const View3D = (function () {
     document.querySelectorAll('.tabbtn').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
     showTab('products');
     window.__xeh = { state: state, showTab: showTab, doPack: doPack, loadSample: loadSample };
+    if (XEH.onInit) XEH.onInit();
   }
   window.addEventListener('DOMContentLoaded', init);
+})();
+
+</script>
+<script>
+/* GIAO DIỆN TAB "ĐƠN HÀNG": nhập tay từng đơn, nhập Excel/CSV có ánh xạ cột, điểm giao, kho xuất phát, ràng buộc ghép/tách. */
+(function () {
+  'use strict';
+  const X = window.XEH;
+  const el = X.el, $ = X.$, nf = X.nf, state = X.state;
+  const MAPS_KEY = 'xeh.maps';
+
+  /* ---------- Phân tích đơn thành các khối xếp xe ---------- */
+  const infoCache = new Map();
+  function findProduct(code) {
+    const k = Model.normText(code);
+    return state.products.find(function (p) { return Model.normText(p.code) === k; }) || null;
+  }
+
+  // Trả {errors, warnings, units, kg, blocks}. Đơn lỗi thì không đưa vào kế hoạch.
+  function orderInfo(o) {
+    const key = JSON.stringify([o, state.products, state.settings]);
+    if (infoCache.has(key)) return infoCache.get(key);
+    const v = Model.validateOrder(o);
+    const res = { errors: v.errors.slice(), warnings: v.warnings.slice(), units: [], kg: 0, blocks: 0, tubes: 0 };
+    (o.lines || []).forEach(function (l, i) {
+      const code = String(l.code || '').trim();
+      if (!code) return;
+      const p = findProduct(code);
+      if (!p) { res.errors.push('Chưa có sản phẩm mã "' + code + '" trong tab Sản phẩm.'); return; }
+      const q = Model.num(l.qty);
+      if (!(q >= 1)) return;
+      const a = X.analyze(Object.assign({}, p, { qty: q, customer: o.customer, stop: '' }));
+      if (a.errors.length) { res.errors.push('Sản phẩm "' + code + '": ' + a.errors[0]); return; }
+      a.units.forEach(function (u) { res.units.push(Object.assign({}, u, { id: o.id + '|' + i + '|' + u.id, customer: o.customer, stop: null })); });
+      res.tubes += q;
+    });
+    res.kg = res.units.reduce(function (s, u) { return s + u.weight; }, 0);
+    res.blocks = res.units.length;
+    if (infoCache.size > 400) infoCache.clear();
+    infoCache.set(key, res);
+    return res;
+  }
+  X.orderInfo = orderInfo;
+  X.findProduct = findProduct;
+
+  /* ---------- Tab ---------- */
+  function render() {
+    const host = $('tab-orders');
+    host.textContent = '';
+    host.appendChild(el('div', { class: 'toolbar' },
+      el('button', { class: 'primary', onclick: function () { openOrderDialog(Model.newOrder({ lines: [{ code: '', qty: '' }] })); } }, '+ Thêm đơn'),
+      el('button', { onclick: openImportDialog }, 'Nhập từ Excel / CSV'),
+      el('button', { class: 'danger', onclick: function () { if (state.orders.length && confirm('Xóa toàn bộ ' + state.orders.length + ' đơn hàng?')) { state.orders = []; state.constraints = []; state.plan = null; X.save(); render(); } } }, 'Xóa tất cả đơn'),
+      el('span', { class: 'spacer' }),
+      el('span', { class: 'hint' }, 'Tick ở cột "Dùng" để đưa đơn vào kế hoạch chuyến.')));
+    host.appendChild(depotPanel());
+    if (!state.orders.length) {
+      host.appendChild(el('div', { class: 'empty' }, 'Chưa có đơn hàng nào. Bấm "+ Thêm đơn" hoặc "Nhập từ Excel / CSV" (file lịch giao hàng).'));
+    } else {
+      const tb = el('tbody');
+      const notes = el('div', { class: 'notes' });
+      state.orders.forEach(function (o) {
+        const i = orderInfo(o);
+        const hasLoc = String(o.lat).trim() !== '' && String(o.lng).trim() !== '';
+        const status = i.errors.length ? el('span', { class: 'tag err' }, 'Lỗi') : o.pickup ? el('span', { class: 'tag warn' }, 'Khách tự lấy') : i.warnings.length ? el('span', { class: 'tag warn' }, 'Cần xem') : el('span', { class: 'tag ok' }, 'Hợp lệ');
+        const chk = el('input', { type: 'checkbox', checked: !!o.include, onchange: function () { o.include = chk.checked; X.save(); } });
+        tb.appendChild(el('tr', null,
+          el('td', null, chk),
+          el('td', null, el('b', null, o.customer || '(chưa có tên)'), el('div', { class: 'sub' }, o.no || '')),
+          el('td', null, o.region || '–', el('div', { class: 'sub' }, hasLoc ? nf(Model.num(o.lat), 4) + ', ' + nf(Model.num(o.lng), 4) : 'chưa có tọa độ')),
+          el('td', { class: 'num' }, nf((o.lines || []).length, 0) + ' dòng'),
+          el('td', { class: 'num' }, i.errors.length ? '–' : nf(i.blocks, 0)),
+          el('td', { class: 'num' }, i.errors.length ? '–' : X.fmt.kg(i.kg)),
+          el('td', null, o.date || '–', el('div', { class: 'sub' }, (o.from || o.to) ? (o.from || '') + ' – ' + (o.to || '') : '')),
+          el('td', null, status),
+          el('td', { class: 'actions' },
+            el('button', { onclick: function () { openOrderDialog(JSON.parse(JSON.stringify(o))); } }, 'Sửa'),
+            el('button', { class: 'danger', onclick: function () { if (confirm('Xóa đơn của "' + o.customer + '"?')) { state.orders = state.orders.filter(function (x) { return x.id !== o.id; }); state.constraints = state.constraints.filter(function (c) { return c.a !== o.id && c.b !== o.id; }); X.save(); render(); } } }, 'Xóa'))));
+        i.errors.forEach(function (m) { notes.appendChild(el('div', { class: 'note err' }, (o.customer || 'Đơn') + ': ' + m)); });
+        i.warnings.forEach(function (m) { notes.appendChild(el('div', { class: 'note warn' }, (o.customer || 'Đơn') + ': ' + m)); });
+        if (o.note) notes.appendChild(el('div', { class: 'note ok' }, (o.customer || 'Đơn') + ' (ghi chú): ' + o.note));
+      });
+      host.appendChild(el('div', { class: 'tablewrap tall2' }, el('table', null,
+        el('thead', null, el('tr', null, ['Dùng', 'Khách / số đơn', 'Khu vực / tọa độ', 'Dòng hàng', 'Số khối', 'Khối lượng', 'Ngày giao', 'Trạng thái', ''].map(function (h) { return el('th', { text: h }); }))), tb)));
+      const det = el('details', { class: 'notesbox' }, el('summary', null, 'Lỗi, cảnh báo và ghi chú của đơn'), notes);
+      host.appendChild(det);
+    }
+    host.appendChild(constraintsPanel());
+  }
+  X.tabs.orders = render;
+
+  /* ---------- Kho xuất phát, hệ số đường, khoảng cách nhập tay ---------- */
+  function depotPanel() {
+    const d = state.depot, s = state.settings;
+    const f = function (key, label, w) {
+      const inp = el('input', { type: 'text', value: d[key], size: w || 12, onchange: function () { d[key] = inp.value; X.save(); } });
+      return el('label', { class: 'inline' }, label + ' ', inp);
+    };
+    const rf = el('input', { type: 'text', value: s.roadFactor, size: 4, onchange: function () {
+      const v = Model.num(rf.value);
+      if (!(v >= 1)) { X.toast('Hệ số đường phải từ 1 trở lên (ví dụ 1,3).'); rf.value = s.roadFactor; return; }
+      s.roadFactor = v; X.save();
+    } });
+    const mt = el('textarea', { rows: 3, placeholder: 'Mỗi dòng: khu vực A, khu vực B, số km (ví dụ: Bắc Ninh, Hải Phòng, 125)', onchange: function () {
+      const r = Model.parseMatrix(mt.value);
+      s.matrixText = mt.value; X.save();
+      msg.textContent = r.errors.length ? r.errors.join(' ') : (r.list.length ? 'Đã đọc ' + r.list.length + ' khoảng cách nhập tay.' : '');
+      msg.className = r.errors.length ? 'note err' : 'hint';
+    } });
+    mt.value = s.matrixText || '';
+    const msg = el('div', { class: 'hint' });
+    return el('details', { class: 'depot', open: !String(d.lat).trim() && !String(d.region).trim() },
+      el('summary', null, 'Kho xuất phát và cách tính khoảng cách'),
+      el('div', { class: 'grid2' }, f('name', 'Tên kho', 16), f('address', 'Địa chỉ', 24), f('lat', 'Vĩ độ', 9), f('lng', 'Kinh độ', 9), f('region', 'Khu vực', 12)),
+      el('div', { class: 'hint' }, 'Khoảng cách giữa hai điểm lấy theo thứ tự: số km nhập tay bên dưới, tọa độ (đường chim bay × hệ số đường), cùng khu vực (5 km), còn lại ước tính 60 km. Tất cả đều là ước tính, không phải quãng đường thực.'),
+      el('label', { class: 'inline' }, 'Hệ số đường ', rf, ' (đường thực ≈ chim bay × hệ số)'),
+      el('div', null, el('div', { class: 'hint' }, 'Khoảng cách nhập tay giữa các khu vực (không bắt buộc):'), mt, msg));
+  }
+
+  /* ---------- Ràng buộc ghép / tách ---------- */
+  const CTYPES = { together: 'Bắt buộc đi chung xe', apart: 'Không được đi chung xe', solo: 'Phải đi xe riêng', first: 'Điểm giao phải giao đầu tiên' };
+  function constraintsPanel() {
+    const wrap = el('div', { class: 'cpanel' }, el('h3', null, 'Ràng buộc ghép / tách'));
+    const nm = function (id) { const o = state.orders.find(function (x) { return x.id === id; }); return o ? o.customer : '(đơn đã xóa)'; };
+    if (state.constraints.length) {
+      const ul = el('ul', null);
+      state.constraints.forEach(function (c, i) {
+        const text = c.type === 'together' ? 'Đơn "' + nm(c.a) + '" bắt buộc đi chung đơn "' + nm(c.b) + '"'
+          : c.type === 'apart' ? 'Đơn "' + nm(c.a) + '" không đi chung đơn "' + nm(c.b) + '"'
+            : c.type === 'solo' ? 'Đơn "' + nm(c.a) + '" phải đi xe riêng' : 'Điểm giao "' + nm(c.a) + '" phải giao đầu tiên';
+        ul.appendChild(el('li', null, text + ' ', el('button', { class: 'danger', onclick: function () { state.constraints.splice(i, 1); X.save(); render(); } }, 'Xóa')));
+      });
+      wrap.appendChild(ul);
+    } else wrap.appendChild(el('p', { class: 'hint' }, 'Chưa có ràng buộc nào. Kết quả tối ưu sẽ tôn trọng các ràng buộc anh đặt ở đây.'));
+    if (state.orders.length) {
+      const opt = function (selected) { return state.orders.map(function (o) { return el('option', { value: o.id, selected: o.id === selected }, o.customer || o.id); }); };
+      const ty = el('select', { onchange: sync }, Object.keys(CTYPES).map(function (k) { return el('option', { value: k }, CTYPES[k]); }));
+      const a = el('select', null, opt()), b = el('select', null, opt(state.orders[1] && state.orders[1].id));
+      const lblB = el('span', null, ' và ');
+      function sync() { const two = ty.value === 'together' || ty.value === 'apart'; b.hidden = !two; lblB.hidden = !two; }
+      sync();
+      wrap.appendChild(el('div', { class: 'toolbar' }, ty, a, lblB, b, el('button', { onclick: function () {
+        if ((ty.value === 'together' || ty.value === 'apart') && a.value === b.value) { X.toast('Hãy chọn hai đơn khác nhau.'); return; }
+        const c = { type: ty.value, a: a.value, b: (ty.value === 'together' || ty.value === 'apart') ? b.value : '' };
+        if (state.constraints.some(function (x) { return x.type === c.type && x.a === c.a && x.b === c.b; })) { X.toast('Ràng buộc này đã có.'); return; }
+        if (c.type === 'together' && state.constraints.some(function (x) { return x.type === 'apart' && ((x.a === c.a && x.b === c.b) || (x.a === c.b && x.b === c.a)); })) { X.toast('Hai đơn này đang bị ràng buộc "không đi chung", xóa ràng buộc đó trước.'); return; }
+        if (c.type === 'apart' && state.constraints.some(function (x) { return x.type === 'together' && ((x.a === c.a && x.b === c.b) || (x.a === c.b && x.b === c.a)); })) { X.toast('Hai đơn này đang bị ràng buộc "bắt buộc đi chung", xóa ràng buộc đó trước.'); return; }
+        state.constraints.push(c); X.save(); render();
+      } }, 'Thêm ràng buộc')));
+    }
+    return wrap;
+  }
+
+  /* ---------- Hộp thoại đơn ---------- */
+  let map = null;
+  function openOrderDialog(o) {
+    const isNew = !state.orders.some(function (x) { return x.id === o.id; });
+    const dlg = $('dlg');
+    dlg.textContent = '';
+    const body = el('div', { class: 'formbody' });
+    const preview = el('div', { class: 'preview' });
+    const saveBtn = el('button', { class: 'primary', onclick: function () {
+      if (isNew) state.orders.push(o); else state.orders = state.orders.map(function (x) { return x.id === o.id ? o : x; });
+      X.save(); dlg.close(); render();
+    } }, 'Lưu đơn');
+    function refresh() {
+      preview.textContent = '';
+      const i = orderInfo(o);
+      i.errors.forEach(function (m) { preview.appendChild(el('div', { class: 'note err' }, m)); });
+      i.warnings.forEach(function (m) { preview.appendChild(el('div', { class: 'note warn' }, m)); });
+      if (!i.errors.length) preview.appendChild(el('div', { class: 'note ok' }, 'Đơn có ' + nf(i.tubes, 0) + ' ống, ' + nf(i.blocks, 0) + ' khối pallet/kiện/rời, nặng ' + X.fmt.kg(i.kg)));
+      saveBtn.disabled = i.errors.some(function (m) { return !/^Chưa có sản phẩm mã|^Sản phẩm "/.test(m); }) ;
+    }
+    const txt = function (key, label, hint, text) {
+      const inp = el('input', { type: 'text', inputmode: text ? 'text' : 'decimal', value: o[key] === undefined ? '' : o[key], oninput: function () { o[key] = inp.value; refresh(); } });
+      inp.dataset.key = key;
+      return el('label', { class: 'f' }, el('span', null, label), inp, hint ? el('small', null, hint) : null);
+    };
+    function build() {
+      body.textContent = '';
+      body.appendChild(el('h3', null, 'Khách hàng và điểm giao'));
+      body.appendChild(el('div', { class: 'grid' }, txt('customer', 'Khách hàng', '', true), txt('no', 'Số đơn (không bắt buộc)', '', true), txt('address', 'Địa chỉ giao', '', true), txt('region', 'Khu vực (tỉnh/huyện/KCN)', 'Dùng để gom khi chưa có tọa độ', true), txt('lat', 'Vĩ độ', 'Ví dụ 20,86'), txt('lng', 'Kinh độ', 'Ví dụ 106,68')));
+      body.appendChild(el('div', { class: 'toolbar' }, el('button', { onclick: function () { toggleMap(); } }, 'Chọn điểm giao trên bản đồ'), el('span', { class: 'hint' }, 'Hoặc nhập tọa độ trực tiếp ở trên.')));
+      body.appendChild(el('div', { id: 'mapbox', class: 'mapbox', hidden: true }));
+      body.appendChild(el('h3', null, 'Thời gian giao (không bắt buộc)'));
+      body.appendChild(el('div', { class: 'grid' }, txt('date', 'Ngày giao (yyyy-mm-dd)', '', true), txt('from', 'Giờ giao từ', 'Ví dụ 08:00', true), txt('to', 'Giờ giao đến', 'Ví dụ 11:00', true), txt('note', 'Ghi chú', '', true)));
+      body.appendChild(el('h3', null, 'Dòng hàng'));
+      const tb = el('tbody');
+      o.lines.forEach(function (l, i) {
+        const sel = el('select', { onchange: function () { l.code = sel.value; refresh(); } },
+          [el('option', { value: '' }, '(chọn mã hàng)')].concat(state.products.map(function (p) { return el('option', { value: p.code, selected: Model.normText(p.code) === Model.normText(l.code) }, p.code + (p.name ? ' · ' + p.name : '')); })));
+        if (l.code && !findProduct(l.code)) sel.appendChild(el('option', { value: l.code, selected: true }, l.code + ' (chưa có trong thư viện)'));
+        const q = el('input', { type: 'text', inputmode: 'numeric', value: l.qty, size: 8, oninput: function () { l.qty = q.value; refresh(); } });
+        tb.appendChild(el('tr', null, el('td', null, sel), el('td', null, q), el('td', null, el('button', { class: 'danger', onclick: function () { o.lines.splice(i, 1); build(); refresh(); } }, 'Xóa'))));
+      });
+      body.appendChild(el('div', { class: 'tablewrap' }, el('table', null, el('thead', null, el('tr', null, ['Mã hàng', 'Số lượng ống', ''].map(function (h) { return el('th', { text: h }); }))), tb)));
+      body.appendChild(el('button', { onclick: function () { o.lines.push({ code: '', qty: '' }); build(); refresh(); } }, '+ Thêm dòng hàng'));
+      if (!state.products.length) body.appendChild(el('p', { class: 'hint warnText' }, 'Chưa có sản phẩm nào trong thư viện. Vào tab "Sản phẩm" để thêm trước.'));
+    }
+    function toggleMap() {
+      const box = $('mapbox');
+      if (!window.L) { X.toast('Không tải được bản đồ (cần mạng). Hãy nhập tọa độ trực tiếp.'); return; }
+      box.hidden = !box.hidden;
+      if (box.hidden) return;
+      if (map) { map.remove(); map = null; }
+      const lat = Model.num(o.lat), lng = Model.num(o.lng);
+      const dl = Model.num(state.depot.lat), dg = Model.num(state.depot.lng);
+      const center = isFinite(lat) && isFinite(lng) ? [lat, lng] : isFinite(dl) && isFinite(dg) ? [dl, dg] : [16, 106];
+      map = L.map(box).setView(center, isFinite(lat) || isFinite(dl) ? 10 : 5);
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+      let marker = isFinite(lat) && isFinite(lng) ? L.marker([lat, lng]).addTo(map) : null;
+      map.on('click', function (e) {
+        o.lat = e.latlng.lat.toFixed(5); o.lng = e.latlng.lng.toFixed(5);
+        if (marker) marker.setLatLng(e.latlng); else marker = L.marker(e.latlng).addTo(map);
+        body.querySelectorAll('input[data-key="lat"]').forEach(function (i) { i.value = o.lat; });
+        body.querySelectorAll('input[data-key="lng"]').forEach(function (i) { i.value = o.lng; });
+        refresh();
+      });
+      setTimeout(function () { map.invalidateSize(); }, 50);
+    }
+    dlg.appendChild(el('h2', null, isNew ? 'Thêm đơn hàng' : 'Sửa đơn hàng'));
+    dlg.appendChild(body);
+    dlg.appendChild(preview);
+    dlg.appendChild(el('div', { class: 'dlgfoot' }, el('button', { onclick: function () { dlg.close(); } }, 'Hủy'), saveBtn));
+    build(); refresh();
+    dlg.addEventListener('close', function () { if (map) { map.remove(); map = null; } }, { once: true });
+    dlg.showModal();
+  }
+
+  /* ---------- Nhập Excel / CSV ---------- */
+  function loadMaps() { try { return JSON.parse(localStorage.getItem(MAPS_KEY) || '{}'); } catch (e) { return {}; } }
+  function saveMap(sig, m) { try { const all = loadMaps(); all[sig] = m; localStorage.setItem(MAPS_KEY, JSON.stringify(all)); } catch (e) { /* bỏ qua */ } }
+
+  function openImportDialog() {
+    const dlg = $('dlg');
+    dlg.textContent = '';
+    dlg.appendChild(el('h2', null, 'Nhập đơn từ Excel / CSV'));
+    const body = el('div', { class: 'formbody' });
+    dlg.appendChild(body);
+    dlg.appendChild(el('div', { class: 'dlgfoot' }, el('button', { onclick: function () { dlg.close(); } }, 'Đóng')));
+    const file = el('input', { type: 'file', accept: '.xlsx,.xls,.csv', id: 'importFile', onchange: function () { if (file.files[0]) readFile(file.files[0]); } });
+    body.appendChild(el('p', null, 'Chọn file lịch giao hàng (mỗi dòng một dòng hàng, tên khách có thể chỉ ghi ở dòng đầu của nhóm). Sau đó chọn cột nào là cột nào; cách chọn sẽ được nhớ cho lần sau.'));
+    body.appendChild(file);
+    const out = el('div', { id: 'importOut' });
+    body.appendChild(out);
+    dlg.showModal();
+
+    function readFile(f) {
+      if (!window.XLSX) { out.textContent = ''; out.appendChild(el('div', { class: 'note err' }, 'Không tải được thư viện đọc Excel (SheetJS). Cần kết nối mạng lần đầu mở ứng dụng, hoặc lưu file dạng CSV rồi thử lại.')); return; }
+      const rd = new FileReader();
+      rd.onload = function () {
+        try {
+          const wb = XLSX.read(new Uint8Array(rd.result), { type: 'array', cellDates: false });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+          showMapping(rows, f.name);
+        } catch (e) {
+          out.textContent = '';
+          out.appendChild(el('div', { class: 'note err' }, 'Không đọc được file này. Kiểm tra đây là file Excel (.xlsx, .xls) hoặc CSV hợp lệ. Chi tiết: ' + e.message));
+        }
+      };
+      rd.readAsArrayBuffer(f);
+    }
+
+    function showMapping(rows, fname) {
+      out.textContent = '';
+      if (!rows.length) { out.appendChild(el('div', { class: 'note err' }, 'File không có dữ liệu.')); return; }
+      let h = Importer.findHeader(rows);
+      if (h < 0) h = 0;
+      const headers = rows[h].map(function (c) { return String(c === undefined || c === null ? '' : c).trim(); });
+      const sig = headers.map(Model.normText).join('|');
+      const saved = loadMaps()[sig];
+      const mapping = saved || Importer.guessMapping(headers);
+      const opts = { replace: true, createProducts: true };
+      out.appendChild(el('div', { class: 'note ok' }, 'Đọc ' + (rows.length - h - 1) + ' dòng dữ liệu từ "' + fname + '", dòng tiêu đề là dòng ' + (h + 1) + '.' + (saved ? ' Đã dùng cách chọn cột đã lưu.' : '')));
+      const colName = function (i) { return String.fromCharCode(65 + (i % 26)) + ': ' + (headers[i] || '(trống)'); };
+      const grid = el('div', { class: 'grid' });
+      Importer.FIELDS.forEach(function (f) {
+        const sel = el('select', { onchange: function () { mapping[f[0]] = Number(sel.value); preview(); } },
+          [el('option', { value: -1 }, '(không dùng)')].concat(headers.map(function (_, i) { return el('option', { value: i, selected: mapping[f[0]] === i }, colName(i)); })));
+        grid.appendChild(el('label', { class: 'f' }, el('span', null, f[1] + (f[0] === 'customer' || f[0] === 'code' || f[0] === 'qty' ? ' (bắt buộc)' : '')), sel));
+      });
+      out.appendChild(grid);
+      const rep = el('input', { type: 'checkbox', checked: true, onchange: function () { opts.replace = rep.checked; } });
+      const cp = el('input', { type: 'checkbox', checked: true, onchange: function () { opts.createProducts = cp.checked; } });
+      out.appendChild(el('div', null, el('label', { class: 'inline' }, rep, ' Thay thế toàn bộ đơn hiện có'), el('br'), el('label', { class: 'inline' }, cp, ' Tự tạo sản phẩm cho mã hàng chưa có (đoán kích thước từ tên hàng, cần kiểm tra lại)')));
+      const pv = el('div', { class: 'preview' });
+      out.appendChild(pv);
+      const btn = el('button', { class: 'primary', onclick: doImport }, 'Nhập vào ứng dụng');
+      out.appendChild(btn);
+      function preview() {
+        pv.textContent = '';
+        const miss = ['customer', 'code', 'qty'].filter(function (k) { return !(mapping[k] >= 0); });
+        btn.disabled = miss.length > 0;
+        if (miss.length) { pv.appendChild(el('div', { class: 'note err' }, 'Cần chọn cột cho: ' + miss.map(function (k) { return Importer.FIELDS.find(function (f) { return f[0] === k; })[1]; }).join(', ') + '.')); return; }
+        const r = Importer.buildOrders(rows, h, mapping, state.products);
+        const s = r.stats;
+        pv.appendChild(el('div', { class: 'note ok' }, 'Sẽ tạo ' + r.orders.length + ' đơn (theo khách hàng) từ ' + s.rows + ' dòng hàng. Ngày giao đọc từ tiêu đề: ' + (r.date || 'không thấy') + '.'));
+        if (s.skippedZero) pv.appendChild(el('div', { class: 'note warn' }, 'Bỏ qua ' + s.skippedZero + ' dòng có số lượng 0 hoặc trống.'));
+        if (s.pickup) pv.appendChild(el('div', { class: 'note warn' }, s.pickup + ' đơn ghi "đến lấy" (khách tự đến lấy) sẽ được bỏ tick, không đưa vào kế hoạch giao xe.'));
+        if (r.newProducts.length) pv.appendChild(el('div', { class: 'note warn' }, 'Có ' + r.newProducts.length + ' mã hàng chưa có trong thư viện: đoán được kích thước cho ' + s.guessed + ' mã, chưa đoán được ' + s.notGuessed + ' mã (sẽ báo lỗi cho đến khi anh nhập kích thước).'));
+      }
+      function doImport() {
+        const r = Importer.buildOrders(rows, h, mapping, state.products);
+        saveMap(sig, mapping);
+        if (opts.createProducts) r.newProducts.forEach(function (p) { state.products.push(p); });
+        if (opts.replace) { state.orders = r.orders; state.constraints = []; state.plan = null; } else state.orders = state.orders.concat(r.orders);
+        X.save();
+        dlg.close();
+        render();
+        X.toast('Đã nhập ' + r.orders.length + ' đơn' + (opts.createProducts && r.newProducts.length ? ' và tạo ' + r.newProducts.length + ' sản phẩm cần kiểm tra' : '') + '.');
+      }
+      preview();
+    }
+  }
+  X.openImport = openImportDialog;
+})();
+
+</script>
+<script>
+/* GIAO DIỆN TAB "KẾ HOẠCH CHUYẾN": chọn mục tiêu và loại xe, chạy gom đơn trong Web Worker, xem từng chuyến và mở 3D. */
+(function () {
+  'use strict';
+  const X = window.XEH;
+  const el = X.el, $ = X.$, nf = X.nf, state = X.state;
+  const OBJ = { vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất', stops: 'Ít điểm dừng nhất' };
+  const OBJ_HINT = {
+    vehicles: 'Dùng ít chuyến xe nhất có thể; khi bằng nhau thì chọn phương án ngắn hơn.',
+    distance: 'Chạy tổng quãng đường ngắn nhất, có thể phải dùng nhiều xe hơn.',
+    cost: 'Cần nhập cước/chi phí mỗi chuyến cho từng loại xe (tab Xe). Nếu thiếu, hệ thống dùng mục tiêu "ít xe nhất".',
+    stops: 'Gom các đơn cùng điểm giao để giảm số lần dừng.',
+  };
+  let worker = null, running = false, latest = null, host = null, ui = {};
+
+  function depotLoc() {
+    const d = state.depot, lat = Model.num(d.lat), lng = Model.num(d.lng);
+    const loc = { key: 'depot', region: String(d.region || '').trim(), address: String(d.address || '').trim() };
+    if (isFinite(lat) && isFinite(lng) && String(d.lat).trim() !== '' && String(d.lng).trim() !== '') { loc.lat = lat; loc.lng = lng; }
+    return loc;
+  }
+
+  // Dựng dữ liệu đầu vào cho bộ lập kế hoạch từ các đơn đang tick.
+  function buildInput() {
+    const skipped = [];
+    const orders = [];
+    state.orders.forEach(function (o) {
+      if (!o.include) return;
+      const info = X.orderInfo(o);
+      if (info.errors.length) { skipped.push((o.customer || 'Đơn') + ': ' + info.errors[0]); return; }
+      if (!info.units.length) { skipped.push((o.customer || 'Đơn') + ': không có dòng hàng nào hợp lệ.'); return; }
+      orders.push({ id: o.id, name: o.customer || o.no || o.id, customer: o.customer, loc: Model.orderLoc(o), units: info.units });
+    });
+    const vehicles = [];
+    const vskip = [];
+    state.vehicles.forEach(function (v) {
+      if (state.planOpts.useVeh[v.id] === false) return;
+      const pv = Model.prepareVehicle(Object.assign({}, v, { maxCount: state.planOpts.maxCount[v.id] !== undefined ? state.planOpts.maxCount[v.id] : v.maxCount }));
+      if (pv.errors.length) { vskip.push((v.name || 'Xe') + ': ' + pv.errors[0]); return; }
+      vehicles.push(pv.n);
+    });
+    const ids = new Set(orders.map(function (o) { return o.id; }));
+    const constraints = state.constraints.filter(function (c) { return ids.has(c.a) && (!c.b || ids.has(c.b)); });
+    return {
+      skipped: skipped.concat(vskip),
+      input: {
+        orders: orders, depot: depotLoc(), vehicles: vehicles, constraints: constraints, objective: state.planOpts.objective,
+        settings: { gap: state.settings.gap, roadFactor: state.settings.roadFactor, matrix: Model.parseMatrix(state.settings.matrixText).list },
+        budgetMs: 8000,
+      },
+    };
+  }
+
+  function stopWorker() { if (worker) { worker.terminate(); worker = null; } }
+
+  function run() {
+    if (running) return;
+    const b = buildInput();
+    if (!b.input.orders.length) { X.toast('Chưa có đơn hợp lệ nào được tick ở tab "Đơn hàng".'); return; }
+    if (!b.input.vehicles.length) { X.toast('Chưa chọn loại xe hợp lệ nào. Vào tab "Xe" để thêm, hoặc tick xe bên dưới.'); return; }
+    if (b.input.objective === 'cost' && !b.input.vehicles.every(function (v) { return v.cost !== null && v.cost !== undefined; })) {
+      X.toast('Mục tiêu "Rẻ chi phí nhất" cần cước của mọi loại xe đã chọn. Tạm dùng "Ít xe nhất".');
+      b.input.objective = 'vehicles';
+    }
+    running = true; latest = null;
+    state.plan = null;
+    state.planSkipped = b.skipped;
+    update();
+    const t0 = performance.now();
+    const finish = function (plan, stopped) {
+      running = false; stopWorker();
+      if (plan) { plan.stopped = !!stopped; plan.wallMs = performance.now() - t0; plan.skipped = b.skipped; state.plan = plan; }
+      update();
+    };
+    try {
+      const glue = '\nonmessage=function(e){var d=e.data;var last=0;var r=Planner.plan(d.input,{onProgress:function(p){var t=Date.now();if(t-last>400){last=t;postMessage({progress:{phase:p.phase,ratio:p.ratio,plan:p.plan||null}});}}});postMessage({result:r});};';
+      stopWorker();
+      worker = new Worker(URL.createObjectURL(new Blob([$('pure-src').textContent + glue], { type: 'text/javascript' })));
+      worker.onmessage = function (e) {
+        if (e.data.result) finish(e.data.result, false);
+        else if (e.data.progress) {
+          const p = e.data.progress;
+          if (p.plan) latest = p.plan;
+          ui.bar.value = Math.round((p.ratio || 0) * 100);
+          ui.phase.textContent = (p.phase || 'Đang tính') + '… ' + Math.round((p.ratio || 0) * 100) + '%' + (latest ? ' (đã có phương án tạm: ' + latest.totals.vehicles + ' xe)' : '');
+        }
+      };
+      worker.onerror = function () { stopWorker(); const r = Planner.plan(Object.assign({}, b.input, { budgetMs: 4000 })); finish(r, false); };
+      worker.postMessage({ input: b.input });
+    } catch (err) {
+      finish(Planner.plan(Object.assign({}, b.input, { budgetMs: 4000 })), false);
+    }
+  }
+
+  function stop() {
+    if (!running) return;
+    if (latest) { X.toast('Đã dừng. Đang hiển thị phương án tốt nhất tìm được tới lúc này.'); running = false; stopWorker(); latest.stopped = true; latest.skipped = state.planSkipped || []; state.plan = latest; update(); }
+    else { running = false; stopWorker(); X.toast('Đã dừng, chưa có phương án nào.'); update(); }
+  }
+
+  /* ---------- Hiển thị ---------- */
+  function optionsPanel() {
+    const objSel = el('select', { onchange: function () { state.planOpts.objective = objSel.value; X.save(); hint.textContent = OBJ_HINT[objSel.value]; } },
+      Object.keys(OBJ).map(function (k) { return el('option', { value: k, selected: state.planOpts.objective === k }, OBJ[k]); }));
+    const hint = el('div', { class: 'hint' }, OBJ_HINT[state.planOpts.objective]);
+    const rows = state.vehicles.map(function (v) {
+      const pv = Model.prepareVehicle(v);
+      const chk = el('input', { type: 'checkbox', checked: state.planOpts.useVeh[v.id] !== false && !pv.errors.length, disabled: !!pv.errors.length, onchange: function () { state.planOpts.useVeh[v.id] = chk.checked; X.save(); } });
+      const mc = el('input', { type: 'text', size: 4, value: state.planOpts.maxCount[v.id] !== undefined ? state.planOpts.maxCount[v.id] : v.maxCount, placeholder: 'không giới hạn', onchange: function () { state.planOpts.maxCount[v.id] = mc.value; X.save(); } });
+      return el('tr', null, el('td', null, chk), el('td', null, v.name || '(chưa đặt tên)', pv.errors.length ? el('div', { class: 'sub warnText' }, pv.errors[0]) : null),
+        el('td', { class: 'num' }, pv.errors.length ? '–' : nf(pv.n.L / 1000, 2) + ' × ' + nf(pv.n.W / 1000, 2) + ' × ' + nf(pv.n.H / 1000, 2) + ' m'),
+        el('td', { class: 'num' }, pv.errors.length ? '–' : X.fmt.kg(pv.n.payload)),
+        el('td', { class: 'num' }, pv.n && pv.n.cost !== null && pv.n.cost !== undefined ? nf(pv.n.cost, 0) + ' đ' : '–'), el('td', null, mc));
+    });
+    return el('div', { class: 'cpanel' },
+      el('div', { class: 'toolbar' }, el('label', { class: 'inline' }, 'Mục tiêu ', objSel)), hint,
+      state.vehicles.length ? el('div', { class: 'tablewrap' }, el('table', null,
+        el('thead', null, el('tr', null, ['Dùng', 'Loại xe', 'Lòng thùng', 'Tải trọng', 'Cước / chuyến', 'Số xe tối đa'].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, rows))) : el('p', { class: 'hint' }, 'Chưa có loại xe nào. Vào tab "Xe" để thêm.'));
+  }
+
+  function summaryCards(P) {
+    const t = P.totals;
+    if (!t) return null;
+    const c = function (k, v, sub) { return el('div', { class: 'card' }, el('div', { class: 'hint' }, k), el('div', { class: 'big' }, v), sub ? el('div', { class: 'sub' }, sub) : null); };
+    return el('div', { class: 'cards cards4' },
+      c('Số xe', nf(t.vehicles, 0)),
+      c('Tổng quãng đường', nf(t.distanceKm, 0) + ' km', P.estimatedDistance ? 'có đoạn ước tính' : 'theo tọa độ / khu vực'),
+      c('Tổng chi phí', t.cost === null ? 'chưa đủ cước' : nf(t.cost, 0) + ' đ'),
+      c('Độ đầy thể tích TB', nf(t.avgVolumePct, 0) + '%', nf(t.stops, 0) + ' điểm dừng'));
+  }
+
+  function tripCard(P, t) {
+    const lines = [];
+    t.stops.forEach(function (s) {
+      lines.push(el('tr', null, el('td', { class: 'num' }, s.seq), el('td', null, s.customers.join(', '), el('div', { class: 'sub' }, [s.region, s.address].filter(Boolean).join(' – ') || 'chưa có địa chỉ')),
+        el('td', { class: 'num' }, nf(s.blocks, 0)), el('td', { class: 'num' }, X.fmt.kg(s.kg)), el('td', { class: 'num' }, nf(s.legKm, 0) + ' km')));
+    });
+    const veh = t.vehicle;
+    const openBtn = el('button', { class: 'primary', onclick: function () {
+      const byId = {};
+      t.units.forEach(function (u) { byId[u.id] = u; });
+      const pl = t.pack.placements;
+      const xs = Array.from(new Set(pl.map(function (p) { return Math.round(p.x); }))).sort(function (a, b) { return a - b; });
+      const ys = Array.from(new Set(pl.map(function (p) { return Math.round(p.y); }))).sort(function (a, b) { return a - b; });
+      const grid = {};
+      pl.forEach(function (p) { grid[p.uid] = { row: xs.indexOf(Math.round(p.x)) + 1, col: ys.indexOf(Math.round(p.y)) + 1 }; });
+      X.openResult({ veh: veh, vehName: veh.name, r: t.pack, byId: byId, skipped: [], ms: P.elapsedMs || 0, totalUnits: t.units.length, grid: grid, title: 'Chuyến ' + t.no + ' – ' + veh.name });
+    } }, 'Xem 3D chuyến này');
+    return el('div', { class: 'trip' },
+      el('div', { class: 'toolbar' }, el('h3', null, 'Chuyến ' + t.no + ': ' + veh.name), el('span', { class: 'spacer' }), openBtn),
+      el('div', { class: 'hint' }, t.summary + ' · ' + nf(t.distanceKm, 0) + ' km · ' + (t.cost === null ? 'chưa có cước' : nf(t.cost, 0) + ' đ')),
+      el('div', { class: 'tablewrap' }, el('table', null,
+        el('thead', null, el('tr', null, ['Thứ tự', 'Khách / điểm giao', 'Số khối', 'Khối lượng', 'Quãng đường tới điểm'].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, lines))),
+      t.notes.map(function (n) { return el('div', { class: 'note ok' }, n); }),
+      t.warnings.map(function (n) { return el('div', { class: 'note warn' }, n); }),
+      t.pack.unplaced && t.pack.unplaced.length ? el('div', { class: 'note err' }, nf(t.pack.unplaced.length, 0) + ' khối chưa xếp được vào chuyến này.') : null);
+  }
+
+  function resultPanel() {
+    const P = state.plan;
+    const box = el('div', { class: 'results' });
+    if (running) return box;
+    if (!P) return box.appendChild(el('div', { class: 'empty' }, 'Chưa có kế hoạch. Bấm "Lập kế hoạch chuyến".')), box;
+    if (P.stopped) box.appendChild(el('div', { class: 'note warn' }, 'Đã dừng sớm: đây là phương án tốt nhất tìm được tới lúc dừng, có thể chưa tối ưu.'));
+    (P.skipped || []).forEach(function (m) { box.appendChild(el('div', { class: 'note warn' }, 'Bỏ qua: ' + m)); });
+    (P.warnings || []).forEach(function (m) { box.appendChild(el('div', { class: 'note warn' }, m)); });
+    const c = summaryCards(P);
+    if (c) box.appendChild(c);
+    (P.unassigned || []).forEach(function (u) { box.appendChild(el('div', { class: 'note err' }, 'Chưa xếp được đơn "' + u.name + '": ' + u.reason)); });
+    P.trips.forEach(function (t) { box.appendChild(tripCard(P, t)); });
+    if (P.trips.length) box.appendChild(el('div', { class: 'hint' }, 'Tính trong ' + nf((P.wallMs || P.elapsedMs || 0) / 1000, 1) + ' giây. Đây là kết quả của phương pháp heuristic (gom theo tiết kiệm, cải thiện cục bộ), không đảm bảo tối ưu tuyệt đối; khoảng cách là ước tính, không phải quãng đường thực.'));
+    return box;
+  }
+
+  function update() {
+    if (!host) return;
+    ui.run.disabled = running; ui.stop.hidden = !running; ui.progress.hidden = !running;
+    if (!running) ui.bar.value = 0;
+    ui.results.replaceWith(ui.results = resultPanel());
+  }
+
+  function render() {
+    host = $('tab-trips');
+    host.textContent = '';
+    const nInc = state.orders.filter(function (o) { return o.include; }).length;
+    ui.run = el('button', { class: 'primary', onclick: run }, 'Lập kế hoạch chuyến');
+    ui.stop = el('button', { class: 'danger', hidden: true, onclick: stop }, 'Dừng và lấy phương án hiện có');
+    ui.bar = el('progress', { max: 100, value: 0 });
+    ui.phase = el('span', { class: 'hint' });
+    ui.progress = el('div', { class: 'toolbar', hidden: true }, ui.bar, ui.phase);
+    ui.results = el('div');
+    host.appendChild(el('div', { class: 'toolbar' }, ui.run, ui.stop, el('span', { class: 'hint' }, nf(nInc, 0) + ' đơn đang được tick để lập kế hoạch.')));
+    host.appendChild(ui.progress);
+    host.appendChild(optionsPanel());
+    host.appendChild(ui.results);
+    update();
+  }
+  X.tabs.trips = render;
+  X.buildPlanInput = buildInput;
 })();
 
 </script>

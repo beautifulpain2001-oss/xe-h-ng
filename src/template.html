@@ -15,17 +15,24 @@
     <button class="tabbtn active" data-tab="products">1. Sản phẩm</button>
     <button class="tabbtn" data-tab="vehicles">2. Xe</button>
     <button class="tabbtn" data-tab="pack">3. Xếp thử một xe</button>
+    <button class="tabbtn" data-tab="orders">4. Đơn hàng</button>
+    <button class="tabbtn" data-tab="trips">5. Kế hoạch chuyến</button>
   </nav>
 </header>
 <main>
   <section class="tab" id="tab-products"></section>
   <section class="tab" id="tab-vehicles" hidden></section>
   <section class="tab" id="tab-pack" hidden></section>
+  <section class="tab" id="tab-orders" hidden></section>
+  <section class="tab" id="tab-trips" hidden></section>
 </main>
 <dialog id="dlg"></dialog>
 <div id="toast"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <!-- Mô hình dữ liệu + bộ giải: cũng được nạp vào Web Worker -->
 <script id="pure-src">
 /*PURE*/
@@ -35,6 +42,12 @@
 </script>
 <script>
 /*APP*/
+</script>
+<script>
+/*ORDERS*/
+</script>
+<script>
+/*TRIPS*/
 </script>
 </body>
 </html>

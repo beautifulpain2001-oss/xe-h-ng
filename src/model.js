@@ -26,7 +26,71 @@ const Model = (function () {
       gap: 0,            // mm, khe hở giữa các khối khi xếp lên xe
       looseMaxH: 1000,   // mm, chiều cao tối đa một khối ống rời
       looseWidth: 1200,  // mm, chiều rộng tối đa một khối ống rời
+      roadFactor: 1.3,   // hệ số đường: quãng đường thực ≈ đường chim bay × hệ số (ước tính)
+      matrixText: '',    // khoảng cách nhập tay, mỗi dòng "khu vực A, khu vực B, km"
     };
+  }
+
+  function defaultDepot() {
+    return { name: 'Kho / nhà máy', address: '', lat: '', lng: '', region: '' };
+  }
+
+  function newOrder(o) {
+    return Object.assign({
+      id: uid('o'), no: '', customer: '', address: '', lat: '', lng: '', region: '',
+      date: '', from: '', to: '', note: '', include: true, pickup: false, lines: [],
+    }, o || {});
+  }
+
+  function normText(s) {
+    return String(s === undefined || s === null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D').toLowerCase().trim();
+  }
+
+  // Vị trí giao của đơn: có tọa độ thì khóa theo tọa độ, không thì theo tên khách (mỗi khách một điểm).
+  function orderLoc(o) {
+    const lat = num(o.lat), lng = num(o.lng);
+    const loc = { region: String(o.region || '').trim(), address: String(o.address || '').trim() };
+    if (isFinite(lat) && isFinite(lng)) {
+      loc.lat = lat; loc.lng = lng;
+      loc.key = 'll:' + lat.toFixed(4) + ',' + lng.toFixed(4);
+    } else {
+      loc.key = 'c:' + normText(o.customer || o.id);
+    }
+    return loc;
+  }
+
+  function validateOrder(o) {
+    const errors = [], warnings = [];
+    if (!String(o.customer || '').trim()) errors.push('Chưa nhập tên khách hàng.');
+    const la = String(o.lat).trim(), lo = String(o.lng).trim();
+    if (la !== '' || lo !== '') {
+      const lat = num(o.lat), lng = num(o.lng);
+      if (!isFinite(lat) || !isFinite(lng)) errors.push('Tọa độ phải nhập đủ cả vĩ độ và kinh độ bằng số (ví dụ 21,18 và 106,07).');
+      else if (lat < -90 || lat > 90 || lng < -180 || lng > 180) errors.push('Tọa độ ngoài phạm vi hợp lệ. Vĩ độ từ -90 đến 90, kinh độ từ -180 đến 180. Có thể bạn nhập ngược vĩ độ và kinh độ.');
+      else if (lat > 30 || lat < 5 || lng < 95 || lng > 115) warnings.push('Tọa độ nằm ngoài khu vực Việt Nam. Kiểm tra lại có nhập ngược vĩ độ và kinh độ không.');
+    } else if (!String(o.region || '').trim()) {
+      warnings.push('Chưa có tọa độ hoặc khu vực: khoảng cách đến đơn này chỉ là ước tính.');
+    }
+    if (!(o.lines && o.lines.length)) errors.push('Đơn chưa có dòng hàng nào.');
+    (o.lines || []).forEach(function (l, i) {
+      const q = num(l.qty);
+      if (!String(l.code || '').trim()) errors.push('Dòng hàng ' + (i + 1) + ' chưa chọn mã hàng.');
+      if (!(q >= 1) || Math.floor(q) !== q) errors.push('Dòng hàng ' + (i + 1) + ': số lượng ống phải là số nguyên từ 1 trở lên.');
+    });
+    return { errors: errors, warnings: warnings };
+  }
+
+  // Phân tích khoảng cách nhập tay: mỗi dòng "A, B, km". Trả {list, errors}.
+  function parseMatrix(text) {
+    const list = [], errors = [];
+    String(text || '').split(/\r?\n/).forEach(function (line, i) {
+      if (!line.trim()) return;
+      const m = line.match(/^([^,;\t]+)[,;\t]([^,;\t]+)[,;\t](.+)$/);
+      const km = m ? num(m[3]) : NaN;
+      if (!m || !m[1].trim() || !m[2].trim() || !(km >= 0)) errors.push('Dòng ' + (i + 1) + ' không đúng dạng "khu vực A, khu vực B, km": ' + line.trim());
+      else list.push({ a: m[1].trim(), b: m[2].trim(), km: km });
+    });
+    return { list: list, errors: errors };
   }
 
   function newProduct(o) {
@@ -34,7 +98,7 @@ const Model = (function () {
       id: uid('p'), code: '', name: '', customer: '', qty: '',
       unit: 'mm', L: '', sizeMode: 'radius', size: '',
       weightMode: 'thickness', T: '', kg: '',
-      orient: 'stand', stackable: false, maxTiers: 2, maxLoad: 500, nestable: false, stop: '',
+      orient: 'stand', stackable: false, maxTiers: 2, maxLoad: 500, nestable: false, stop: '', auto: false, guess: '',
       packType: 'pallet', perUnit: '',
       palL: 1200, palW: 1000, palH: 150, palKg: 20, maxH: 1800,
       bunL: '', bunW: '', bunH: '', bunKg: 0,
@@ -203,7 +267,7 @@ const Model = (function () {
     return { errors: errors, warnings: warnings, n: n };
   }
 
-  const api = { UNIT_MM: UNIT_MM, uid: uid, num: num, defaultSettings: defaultSettings, newProduct: newProduct, newVehicle: newVehicle, prepareProduct: prepareProduct, prepareVehicle: prepareVehicle };
+  const api = { UNIT_MM: UNIT_MM, uid: uid, num: num, normText: normText, defaultDepot: defaultDepot, newOrder: newOrder, orderLoc: orderLoc, validateOrder: validateOrder, parseMatrix: parseMatrix, defaultSettings: defaultSettings, newProduct: newProduct, newVehicle: newVehicle, prepareProduct: prepareProduct, prepareVehicle: prepareVehicle };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;
 })();
