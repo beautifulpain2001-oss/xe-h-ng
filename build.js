@@ -8,6 +8,7 @@ const html = r('template.html')
   .replace('/*VIEW3D*/', () => r('view3d.js'))
   .replace('/*APP*/', () => r('app.js'))
   .replace('/*ORDERS*/', () => r('orders.js'))
-  .replace('/*TRIPS*/', () => r('trips.js'));
+  .replace('/*TRIPS*/', () => r('trips.js'))
+  .replace('/*PLANS*/', () => r('plans.js'));
 fs.writeFileSync(__dirname + '/index.html', html);
 console.log('Đã tạo index.html (' + Math.round(html.length / 1024) + ' KB)');

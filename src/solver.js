@@ -416,7 +416,7 @@ const Solver = (function () {
       const relaxedCount = r.placed.filter(function (b) { return b.relaxed; }).length;
       const m = vehicleMetrics(r.placed, V, payload);
       let q = v - relaxedCount * 0.05 * totalVol;
-      if (m.warnings.length) q -= 0.02 * totalVol;
+      if (m.warnings.length) q -= 0.002 * totalVol; // cảnh báo trọng tâm chỉ là tiêu chí phụ: chở thêm được hàng quan trọng hơn
       if (!best || q > best.q + EPS) best = { r: r, q: q };
       if (opts.onProgress) opts.onProgress((idx + 1) / chosen.length);
     });
