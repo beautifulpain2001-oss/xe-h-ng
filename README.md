@@ -55,6 +55,7 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Mỗi dòng có mức **Thường / Ưu tiên / Bắt buộc** (cờ "Ưu tiên" của lịch gốc tự tính là Ưu tiên). Mỗi mã hàng có thể nhập số lượng **sẵn sàng buổi sáng** và **tổng đến chiều** (trống = đủ hàng).
 - Mỗi dòng chỉ giao khi đủ số lượng. Hàng được chia theo thứ tự ưu tiên, dòng bắt buộc chọn buổi sớm nhất đủ hàng; chưa đủ buổi sáng thì dời sang chiều, chưa đủ cả ngày thì để ngày sau.
 - Mỗi buổi chạy bộ gom đơn riêng với toàn bộ xe. Nếu dòng bắt buộc chưa lên xe, bộ lập tìm nhị phân số dòng ít ưu tiên phải nhường chỗ; dòng nhường và dòng không có xe được chuyển sang buổi sau, cuối ngày còn lại thì báo "chưa lên xe".
+- Bản đồ các chuyến (`src/simmap.js`): vẽ kho, điểm giao theo thứ tự và đường nối của từng chuyến (nét đứt = chiều), kéo / phóng to, lọc theo chuyến. Offline chỉ có lưới kinh vĩ độ và mốc tỉnh; khi có mạng bật được nền OpenStreetMap. Đường vẽ là đường thẳng, không phải đường bộ.
 - Tab có đủ công cụ như màn xếp hàng: kéo thả điểm giao giữa chuyến, đổi xe / buổi, hoàn tác, lưu và so sánh phương án, ràng buộc ghép tách theo tên khách, xuất Excel / PDF, xem 3D đầy đủ (tô màu, góc nhìn, cắt lớp, lọc, hoạt ảnh chất / dỡ hàng).
 
 - Lấy dòng hàng của ngày giao từ Kế hoạch ngày đã xuất (hoặc các dòng đang mở theo lịch), xe từ danh sách xe, địa chỉ từ danh sách khách hàng của file.
