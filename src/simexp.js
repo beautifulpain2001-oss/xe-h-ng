@@ -6,12 +6,12 @@ function seTruckName(t) { const tr = simTruck(t); return tr ? ((tr.code ? xeCode
 
 function simTables(R) {
   const P = R.plan, T = P.totals || {}, oc = simOutcomes(R), must = oc.filter(o => o.pri === 'must');
-  const summary = [['Ngày giao', R.D], ['Mục tiêu', SIMOBJ[P.objective] || ''], ['Số chuyến', T.vehicles], ['Tổng quãng đường (km, ước tính)', seRound(T.distanceKm || 0, 0)], ['Số điểm giao', T.stops],
+  const summary = [['Ngày giao', R.D], ['Mục tiêu', SIMOBJ[P.objective] || ''], ['Số chuyến', T.vehicles], ['Tổng quãng đường (km, ước tính)', seRound(T.distanceKm || 0, 0)], ['Tổng cước (đ, ước tính)', T.cost === null || T.cost === undefined ? 'chưa nhập đủ cước' : seRound(T.cost, 0)], ['Số điểm giao', T.stops],
     ['Độ đầy thể tích trung bình (%)', seRound(T.avgVolumePct || 0, 0)], ['Hàng bắt buộc đã sắp đủ', must.filter(o => o.state === 'ok').length + '/' + must.length], ['Dòng chưa lên xe', oc.filter(o => o.state !== 'ok').length], ['Đã chỉnh tay', P.edited ? 'Có' : 'Không']];
-  const trips = [['Chuyến', 'Buổi', 'Xe', 'Loại xe', 'Thứ tự giao', 'Khách', 'Khu vực', 'Địa chỉ', 'Số khối', 'Khối lượng (kg)', 'Km tới điểm', 'Đầy thể tích (%)', 'Đầy tải trọng (%)']];
+  const trips = [['Chuyến', 'Buổi', 'Xe', 'Loại xe', 'Thứ tự giao', 'Khách', 'Khu vực', 'Địa chỉ', 'Số khối', 'Khối lượng (kg)', 'Km tới điểm', 'Cước chuyến (đ)', 'Đầy thể tích (%)', 'Đầy tải trọng (%)']];
   const loads = [['Chuyến', 'Thứ tự chất', 'Mã hàng', 'Khách', 'Điểm giao', 'Số ống', 'Khối lượng (kg)', 'Hàng', 'Cột', 'Tầng']];
   P.trips.forEach(tr => {
-    tr.stops.forEach(s => trips.push([tr.no, simSesName(tr.session), seTruckName(tr), tr.vehicle.name, s.seq, s.customers.join(', '), s.region, s.address, s.blocks, seRound(s.kg, 1), seRound(s.legKm, 0), seRound(tr.volumePct, 0), seRound(tr.weightPct, 0)]));
+    tr.stops.forEach(s => trips.push([tr.no, simSesName(tr.session), seTruckName(tr), tr.vehicle.name, s.seq, s.customers.join(', '), s.region, s.address, s.blocks, seRound(s.kg, 1), seRound(s.legKm, 0), tr.cost === null || tr.cost === undefined ? '' : seRound(tr.cost, 0), seRound(tr.volumePct, 0), seRound(tr.weightPct, 0)]));
     const byId = {}; tr.units.forEach(u => { byId[u.id] = u; });
     const pl = tr.pack.placements, xs = Array.from(new Set(pl.map(p => Math.round(p.x)))).sort((a, b) => a - b), ys = Array.from(new Set(pl.map(p => Math.round(p.y)))).sort((a, b) => a - b), pos = {};
     pl.forEach(p => { pos[p.uid] = p; });
@@ -35,7 +35,7 @@ function simExcel() {
   if (!window.XLSX) return toast('Chưa tải được thư viện Excel (cần mạng lần đầu).');
   const T = simTables(R), wb = XLSX.utils.book_new(), add = (rows, name, w) => { const ws = XLSX.utils.aoa_to_sheet(rows); if (w) ws['!cols'] = w.map(x => ({ wch: x })); XLSX.utils.book_append_sheet(wb, ws, name); };
   add(T.summary, 'Tổng hợp', [34, 30]);
-  add(T.trips, 'Chuyến', [8, 8, 26, 22, 10, 32, 18, 30, 9, 14, 11, 14, 14]);
+  add(T.trips, 'Chuyến', [8, 8, 26, 22, 10, 32, 18, 30, 9, 14, 11, 14, 14, 14]);
   add(T.loads, 'Thứ tự chất hàng');
   add(T.lines, 'Từng dòng hàng', [30, 16, 14, 16, 30, 9, 12, 10, 10, 8, 60]);
   seDownload('gia-lap-chuyen-' + R.D + '-' + seStamp() + '.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', XLSX.write(wb, { bookType: 'xlsx', type: 'array' }));
@@ -63,7 +63,7 @@ function simPdf() {
     '.trip{page-break-inside:avoid;border-top:2px solid #333;margin-top:14px;padding-top:6px}.warn{color:#8a5a00}.err{color:#b42318}.hint{color:#555;font-size:11px}@media print{.noprint{display:none}}</style></head><body>',
     '<div class="noprint"><button onclick="window.print()">In / Lưu thành PDF</button></div>',
     '<h1>Giả lập chuyến giao hàng ngày ' + esc(fmt(R.D)) + '</h1><div class="hint">Lập ' + new Date().toLocaleString('vi-VN') + ' · mục tiêu: ' + esc(SIMOBJ[P.objective] || '') + (P.edited ? ' · đã chỉnh tay' : '') + '</div>',
-    '<p>Số chuyến: <b>' + fmtN(T.vehicles) + '</b> · Quãng đường (ước tính): <b>' + fmtN(Math.round(T.distanceKm || 0)) + ' km</b> · Điểm giao: <b>' + fmtN(T.stops) + '</b> · Độ đầy thể tích TB: <b>' + fmtN(Math.round(T.avgVolumePct || 0)) + '%</b></p>'];
+    '<p>Số chuyến: <b>' + fmtN(T.vehicles) + '</b> · Quãng đường (ước tính): <b>' + fmtN(Math.round(T.distanceKm || 0)) + ' km</b> · Điểm giao: <b>' + fmtN(T.stops) + '</b>' + (T.cost !== null && T.cost !== undefined ? ' · Tổng cước (ước tính): <b>' + fmtN(Math.round(T.cost)) + ' đ</b>' : '') + ' · Độ đầy thể tích TB: <b>' + fmtN(Math.round(T.avgVolumePct || 0)) + '%</b></p>'];
   const bad = oc.filter(o => o.state !== 'ok');
   if (bad.length) {
     h.push('<h2>Dòng chưa lên xe (' + bad.length + ')</h2><table><tr><th>Khách</th><th>Mã hàng</th><th>SL</th><th>Ưu tiên</th><th>Tình trạng</th></tr>');
