@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Xếp ống giấy lên xe</title>
+<style>
+/*STYLE*/
+</style>
+</head>
+<body>
+<header>
+  <h1>Xếp ống giấy lên xe</h1>
+  <nav>
+    <button class="tabbtn active" data-tab="products">1. Sản phẩm</button>
+    <button class="tabbtn" data-tab="vehicles">2. Xe</button>
+    <button class="tabbtn" data-tab="pack">3. Xếp thử một xe</button>
+  </nav>
+</header>
+<main>
+  <section class="tab" id="tab-products"></section>
+  <section class="tab" id="tab-vehicles" hidden></section>
+  <section class="tab" id="tab-pack" hidden></section>
+</main>
+<dialog id="dlg"></dialog>
+<div id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<!-- Mô hình dữ liệu + bộ giải: cũng được nạp vào Web Worker -->
+<script id="pure-src">
+/*PURE*/
+</script>
+<script>
+/*VIEW3D*/
+</script>
+<script>
+/*APP*/
+</script>
+</body>
+</html>
