@@ -3,8 +3,9 @@
   'use strict';
   const X = window.XEH;
   const el = X.el, $ = X.$, nf = X.nf, state = X.state;
-  const OBJ = { vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất', stops: 'Ít điểm dừng nhất' };
+  const OBJ = { balanced: 'Cân bằng (gần nhau, ít xe)', vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất', stops: 'Ít điểm dừng nhất' };
   const OBJ_HINT = {
+    balanced: 'Thêm một xe được coi như đi thêm khoảng 120 km: ghép các điểm giao gần nhau, không ghép khách xa nhau chỉ để bớt một xe.',
     vehicles: 'Dùng ít chuyến xe nhất có thể; khi bằng nhau thì chọn phương án ngắn hơn.',
     distance: 'Chạy tổng quãng đường ngắn nhất, có thể phải dùng nhiều xe hơn.',
     cost: 'Cần nhập cước/chi phí mỗi chuyến cho từng loại xe (tab Xe). Nếu thiếu, hệ thống dùng mục tiêu "ít xe nhất".',
@@ -120,7 +121,7 @@
     if (running) return;
     const b = buildInput();
     if (!checkInput(b)) return;
-    const objs = costOk(b.input) ? ['vehicles', 'distance', 'cost', 'stops'] : ['vehicles', 'distance', 'stops'];
+    const objs = costOk(b.input) ? ['balanced', 'vehicles', 'distance', 'cost', 'stops'] : ['balanced', 'vehicles', 'distance', 'stops'];
     running = true; cancelAll = false;
     update();
     const out = [];

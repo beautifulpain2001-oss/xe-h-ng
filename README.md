@@ -46,6 +46,15 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Excel (SheetJS): sheet Tổng hợp, Chuyến, Thứ tự chất hàng, Chưa xếp được. PDF: bấm "Xuất PDF / In", chọn "Lưu thành PDF" trong hộp thoại in (giữ đúng chữ Việt, có hình nhìn từ trên xuống của từng thùng).
 - Phiên: "Lưu phiên" ghi toàn bộ sản phẩm, xe, đơn, kế hoạch, phương án đã lưu vào file .json; "Mở phiên" nạp lại.
 
+## Tích hợp vào file "Kế hoạch giao hàng" (giả lập chuyến)
+
+`node integrate.js <file-ke-hoach-goc.html> [file-dau-ra.html]` chèn thêm tab **Giả lập chuyến** vào file Kế hoạch giao hàng có sẵn (file gốc không nằm trong repo vì chứa dữ liệu khách hàng). Script chỉ thêm mã, không đổi dữ liệu; từ chối chạy nếu cấu trúc file gốc đã đổi.
+
+- Lấy dòng hàng của ngày giao từ Kế hoạch ngày đã xuất (hoặc các dòng đang mở theo lịch), xe từ danh sách xe, địa chỉ từ danh sách khách hàng của file.
+- Vị trí khách: `src/geo.js` nhận quận/huyện/tỉnh từ địa chỉ (bảng tọa độ xấp xỉ, sai số vài km đến vài chục km), có thể ghi đè bằng địa chỉ ngắn hoặc tọa độ. Quy cách ống đoán từ tên hàng, chỉnh được trong tab.
+- Mục tiêu "Cân bằng": thêm một xe tương đương đi thêm 120 km, nên ghép khách gần nhau mà không ghép khách xa nhau chỉ để bớt một xe.
+- Kết quả: các chuyến, khách đi chung, xe gợi ý (theo thứ tự mã xe, 1 hoặc 2 chuyến sáng/chiều mỗi xe), xếp 3D; nút "Gán xe vào kế hoạch" ghi xe và buổi vào các dòng của kế hoạch.
+
 ## Hiệu năng (đo bằng Node, một luồng; trình duyệt tương đương)
 
 - Xếp một xe: 300 khối trộn dưới 5 giây.

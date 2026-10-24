@@ -183,5 +183,12 @@ test('hiệu năng: 48 đơn (nhân từ 8 đơn mẫu) gom xong dưới 20 giâ
   assert.strictEqual(p.trips.reduce((s, t) => s + t.pack.unplaced.length, 0), 0, 'chuyến còn khối chưa xếp');
 });
 
+test('mục tiêu cân bằng: quãng đường không dài hơn "ít xe nhất", số xe không nhiều hơn "quãng đường"', () => {
+  const b = run(orders8, { objective: 'balanced' }), v = run(orders8, { objective: 'vehicles' }), d = run(orders8, { objective: 'distance' });
+  allUnitsPlaced(b, orders8);
+  assert.ok(b.totals.distanceKm <= v.totals.distanceKm + 1e-6, 'km ' + b.totals.distanceKm + ' > ' + v.totals.distanceKm);
+  assert.ok(b.totals.vehicles <= d.totals.vehicles, 'xe ' + b.totals.vehicles + ' > ' + d.totals.vehicles);
+});
+
 console.log(report.join('\n'));
 console.log('\n' + passed + ' kiểm thử đạt' + (process.exitCode ? ', CÓ LỖI' : ''));

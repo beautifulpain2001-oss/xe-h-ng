@@ -6,6 +6,7 @@
  * trong giới hạn thời gian, có thể dừng giữa chừng và lấy phương án tốt nhất hiện có; (6) xếp lần cuối ở chất lượng cao. */
 const Planner = (function () {
   const S = (typeof Solver !== 'undefined') ? Solver : require('./solver.js');
+  const BALANCED_KM = 120;
   const FALLBACK_KM = 60;
   const SAME_REGION_KM = 5;
   const PROXY_FILL = 0.92;   // ước lượng sơ bộ: xe đầy tối đa 92% thể tích bao khối
@@ -35,7 +36,7 @@ const Planner = (function () {
       if (memo.has(k)) return memo.get(k);
       let d;
       if (p.region && q.region && matrix.has(p.region + '|' + q.region)) d = matrix.get(p.region + '|' + q.region);
-      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = haversine(p, q) * rf;
+      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = Math.max(haversine(p, q) * rf, SAME_REGION_KM); // hai điểm khác nhau không cách 0 km dù cùng tọa độ xấp xỉ
       else if (p.region && q.region && p.region === q.region) d = SAME_REGION_KM;
       else { d = FALLBACK_KM; if (flags) flags.estimated = true; }
       memo.set(k, d); memo.set(q.key + '>' + p.key, d);
@@ -277,6 +278,7 @@ const Planner = (function () {
       let d = 0, cost = 0, stops = 0, capacity = 0;
       routes.forEach(function (r) { d += r.dist; cost += routeCost(r); stops += r.seq.length; capacity += r.vehicle ? r.vehicle.volume : 0; });
       if (objective === 'distance') return d * 1e4 + nV * 10 + capacity * 0.01;
+      if (objective === 'balanced') return (d + nV * BALANCED_KM) * 1e3 + capacity * 0.01; // thêm một xe tương đương đi thêm BALANCED_KM km
       if (objective === 'cost') return (costKnown ? cost : capacity * 1000) * 1e3 + d;
       if (objective === 'stops') return stops * 1e9 + nV * 1e6 + d * 1e2 + capacity;
       return nV * 1e9 + d * 1e3 + capacity; // ít xe nhất
