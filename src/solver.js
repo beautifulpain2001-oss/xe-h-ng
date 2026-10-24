@@ -406,7 +406,7 @@ const Solver = (function () {
       [0, 2, 1].forEach(function (score) { [false, true].forEach(function (rotFirst) { runs.push({ order: o, rotFirst: rotFirst, score: score }); }); });
     });
     // Dữ liệu lớn: giảm số cấu hình để giữ tốc độ.
-    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 12 : runs.length;
+    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 8 : runs.length;
     const totalVol = V.L * V.W * V.H;
     let best = null;
     const chosen = runs.filter(function (cf) { return !cf.late; }).slice(0, budget).concat(runs.filter(function (cf) { return cf.late; }));
@@ -416,7 +416,7 @@ const Solver = (function () {
       const relaxedCount = r.placed.filter(function (b) { return b.relaxed; }).length;
       const m = vehicleMetrics(r.placed, V, payload);
       let q = v - relaxedCount * 0.05 * totalVol;
-      if (m.warnings.length) q -= 0.02 * totalVol;
+      if (m.warnings.length) q -= 0.002 * totalVol; // cảnh báo trọng tâm chỉ là tiêu chí phụ: chở thêm được hàng quan trọng hơn
       if (!best || q > best.q + EPS) best = { r: r, q: q };
       if (opts.onProgress) opts.onProgress((idx + 1) / chosen.length);
     });

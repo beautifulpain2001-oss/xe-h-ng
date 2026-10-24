@@ -86,3 +86,9 @@ label.inline{display:inline-flex;gap:6px;align-items:center}
 .trip{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:12px 0}
 .trip h3{margin:4px 0}
 progress{width:260px}
+/* GĐ4 */
+.dragrow{cursor:grab}.dragrow:active{cursor:grabbing}
+.trip.dropping,.newtrip.dropping{outline:2px dashed var(--accent,#2f6fed);background:#eef3ff}
+.newtrip{border:2px dashed var(--line);border-radius:8px;padding:14px;text-align:center;color:var(--mut);margin:12px 0}
+td.bestcell{background:#dcf3e4;font-weight:700}
+.sessionbtns{margin-left:auto;display:flex;gap:8px}.sess{background:#2a5a86;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}.sess:hover{background:#3a6d9c}

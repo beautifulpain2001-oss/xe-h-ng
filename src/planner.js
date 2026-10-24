@@ -6,6 +6,7 @@
  * trong giới hạn thời gian, có thể dừng giữa chừng và lấy phương án tốt nhất hiện có; (6) xếp lần cuối ở chất lượng cao. */
 const Planner = (function () {
   const S = (typeof Solver !== 'undefined') ? Solver : require('./solver.js');
+  const BALANCED_KM = 120;
   const FALLBACK_KM = 60;
   const SAME_REGION_KM = 5;
   const PROXY_FILL = 0.92;   // ước lượng sơ bộ: xe đầy tối đa 92% thể tích bao khối
@@ -35,7 +36,7 @@ const Planner = (function () {
       if (memo.has(k)) return memo.get(k);
       let d;
       if (p.region && q.region && matrix.has(p.region + '|' + q.region)) d = matrix.get(p.region + '|' + q.region);
-      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = haversine(p, q) * rf;
+      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = Math.max(haversine(p, q) * rf, SAME_REGION_KM); // hai điểm khác nhau không cách 0 km dù cùng tọa độ xấp xỉ
       else if (p.region && q.region && p.region === q.region) d = SAME_REGION_KM;
       else { d = FALLBACK_KM; if (flags) flags.estimated = true; }
       memo.set(k, d); memo.set(q.key + '>' + p.key, d);
@@ -277,6 +278,7 @@ const Planner = (function () {
       let d = 0, cost = 0, stops = 0, capacity = 0;
       routes.forEach(function (r) { d += r.dist; cost += routeCost(r); stops += r.seq.length; capacity += r.vehicle ? r.vehicle.volume : 0; });
       if (objective === 'distance') return d * 1e4 + nV * 10 + capacity * 0.01;
+      if (objective === 'balanced') return (d + nV * BALANCED_KM) * 1e3 + capacity * 0.01; // thêm một xe tương đương đi thêm BALANCED_KM km
       if (objective === 'cost') return (costKnown ? cost : capacity * 1000) * 1e3 + d;
       if (objective === 'stops') return stops * 1e9 + nV * 1e6 + d * 1e2 + capacity;
       return nV * 1e9 + d * 1e3 + capacity; // ít xe nhất
@@ -484,14 +486,21 @@ const Planner = (function () {
 
     function finalize(rs, quick) {
       const trips = rs.slice().sort(function (a, b) { return b.vol - a.vol; }).map(function (r, k) {
-        const pack = quick ? r.pack : packRoute(r.units, r.vehicle, false);
+        let pack = quick ? r.pack : packRoute(r.units, r.vehicle, false);
+        let fallbackNote = null;
+        if (!quick && pack.unplaced.length) {
+          // Xếp kỹ giữ đúng thứ tự dỡ nhưng bỏ sót hàng: dùng cách xếp chở hết (nới thứ tự dỡ, có cảnh báo đỏ) nếu có.
+          const q = packRoute(r.units, r.vehicle, true);
+          if (q.unplaced.length < pack.unplaced.length) { pack = q; fallbackNote = 'Chở hết hàng chỉ khi nới thứ tự dỡ hàng; xem cảnh báo đỏ ở chuyến này.'; }
+        }
         const m = pack.metrics;
         const stops = r.seq.map(function (p, i) {
           const ents = r.entities.filter(function (e) { return e.locs.some(function (l) { return l.key === p.key; }); });
           const us = r.units.filter(function (u) { return u.stop === i + 1; });
-          return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', customers: Array.from(new Set(ents.map(function (e) { return e.name; }))), orderIds: Array.from(new Set([].concat.apply([], ents.map(function (e) { return e.members; })))), kg: weightOf(us), blocks: us.length, legKm: i === 0 ? dist(depot, p) : dist(r.seq[i - 1], p) };
+          return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', lat: p.lat, lng: p.lng, customers: Array.from(new Set(ents.map(function (e) { return e.name; }))), orderIds: Array.from(new Set([].concat.apply([], ents.map(function (e) { return e.members; })))), kg: weightOf(us), blocks: us.length, legKm: i === 0 ? dist(depot, p) : dist(r.seq[i - 1], p) };
         });
         const notes = r.notes.slice();
+        if (fallbackNote) notes.push(fallbackNote);
         const head = r.vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng';
         const rej = (r.rejected || []).filter(function (x) { return /không xếp vừa|thiếu thể tích|quá tải/.test(x); });
         if (rej.length) notes.push('Chọn ' + r.vehicle.name + ' vì xe nhỏ hơn không đủ (' + rej.join('; ') + ').');
@@ -511,7 +520,45 @@ const Planner = (function () {
     }
   }
 
-  const api = { plan: plan, makeDistance: makeDistance, sequence: sequence, tourLength: tourLength, haversine: haversine };
+  /* Dựng lại một chuyến từ danh sách khối (dùng khi người dùng kéo thả đơn giữa các chuyến hoặc đổi xe).
+   * locs: {locKey: {key, lat, lng, region, address}}. Trả chuyến cùng dạng với kết quả của plan(). */
+  function buildTrip(units, vehicle, locs, depot, settings, notes) {
+    settings = settings || {};
+    const flags = { estimated: false };
+    const dist = makeDistance(settings, flags);
+    const keys = [];
+    units.forEach(function (u) { if (keys.indexOf(u.locKey) < 0) keys.push(u.locKey); });
+    const pts = keys.map(function (k) { return locs[k] || { key: k, region: '', address: '' }; });
+    const seq = sequence(pts, depot, dist, null);
+    const us = units.map(function (u) { return Object.assign({}, u, { stop: seq.findIndex(function (p) { return p.key === u.locKey; }) + 1 }); });
+    let pack = S.packVehicle(us, vehicle, { gap: settings.gap || 0, estimateExtra: true });
+    if (pack.unplaced.length) {
+      const q = S.packVehicle(us, vehicle, { gap: settings.gap || 0, quick: true });
+      if (q.unplaced.length < pack.unplaced.length) { pack = q; notes = (notes || []).concat(['Chở hết hàng chỉ khi nới thứ tự dỡ hàng; xem cảnh báo đỏ ở chuyến này.']); }
+    }
+    const m = pack.metrics;
+    const stops = seq.map(function (p, i) {
+      const sus = us.filter(function (u) { return u.stop === i + 1; });
+      return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', lat: p.lat, lng: p.lng,
+        customers: Array.from(new Set(sus.map(function (u) { return u.customer; }))),
+        orderIds: Array.from(new Set(sus.map(function (u) { return String(u.id).split('|')[0]; }))),
+        kg: weightOf(sus), blocks: sus.length, legKm: i === 0 ? dist(depot, p) : dist(seq[i - 1], p) };
+    });
+    return {
+      no: 0, vehicle: vehicle, pack: pack, units: us, stops: stops, distanceKm: tourLength(seq, depot, dist),
+      cost: isNum(vehicle.cost) ? vehicle.cost : null, summary: vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng',
+      notes: notes || [], orders: Array.from(new Set(us.map(function (u) { return String(u.id).split('|')[0]; }))),
+      volumePct: m.volumePct, weightPct: m.weightPct, warnings: pack.warnings.slice(), estimated: flags.estimated,
+    };
+  }
+
+  function totalsOf(trips) {
+    let km = 0, cost = 0, known = true, stops = 0;
+    trips.forEach(function (t) { km += t.distanceKm; if (t.cost === null || t.cost === undefined) known = false; else cost += t.cost; stops += t.stops.length; });
+    return { vehicles: trips.length, distanceKm: km, cost: known ? cost : null, stops: stops, avgVolumePct: trips.length ? trips.reduce(function (s, t) { return s + t.volumePct; }, 0) / trips.length : 0 };
+  }
+
+  const api = { buildTrip: buildTrip, totalsOf: totalsOf, plan: plan, makeDistance: makeDistance, sequence: sequence, tourLength: tourLength, haversine: haversine };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;
 })();

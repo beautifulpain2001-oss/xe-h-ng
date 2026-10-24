@@ -156,5 +156,39 @@ test('khoảng cách: nhập tay ưu tiên hơn tọa độ; cùng khu vực kh�
   assert.ok(hn > 90 && hn < 120, 'HN-HP ' + hn);
 });
 
+test('dựng lại chuyến sau khi kéo thả: chuyển một điểm giao sang chuyến khác, không mất khối', () => {
+  const p = run(orders8, { objective: 'distance' });
+  assert.ok(p.trips.length >= 2, 'cần ít nhất 2 chuyến để thử');
+  const locs = {};
+  orders8.forEach((o) => { locs[o.loc.key] = o.loc; });
+  const a = p.trips[0], b = p.trips[1];
+  const moved = a.units.filter((u) => u.locKey === a.stops[0].locKey);
+  const restA = a.units.filter((u) => u.locKey !== a.stops[0].locKey);
+  const nb = Planner.buildTrip(b.units.concat(moved), b.vehicle, locs, LOC.depot, { gap: 0, roadFactor: 1.3 });
+  assert.strictEqual(nb.stops.length, b.stops.length + 1 - (b.stops.some((s) => s.locKey === a.stops[0].locKey) ? 1 : 0));
+  assert.strictEqual(nb.pack.placements.length + nb.pack.unplaced.length, b.units.length + moved.length);
+  if (restA.length) { const na = Planner.buildTrip(restA, a.vehicle, locs, LOC.depot, { gap: 0 }); assert.strictEqual(na.pack.placements.length + na.pack.unplaced.length, restA.length); }
+  const tt = Planner.totalsOf([nb]);
+  assert.strictEqual(tt.vehicles, 1);
+});
+
+test('hiệu năng: 48 đơn (nhân từ 8 đơn mẫu) gom xong dưới 20 giây, không mất khối', () => {
+  const big = [];
+  for (let i = 0; i < 6; i++) orders8.forEach((o) => big.push(Object.assign({}, o, { id: o.id + '_' + i, units: o.units.map((u) => Object.assign({}, u, { id: o.id + '_' + i + '|' + u.id })) })));
+  const t0 = Date.now();
+  const p = run(big, { budgetMs: 6000 });
+  const ms = Date.now() - t0;
+  allUnitsPlaced(p, big);
+  assert.ok(ms < 20000, 'mất ' + ms + ' ms');
+  assert.strictEqual(p.trips.reduce((s, t) => s + t.pack.unplaced.length, 0), 0, 'chuyến còn khối chưa xếp');
+});
+
+test('mục tiêu cân bằng: quãng đường không dài hơn "ít xe nhất", số xe không nhiều hơn "quãng đường"', () => {
+  const b = run(orders8, { objective: 'balanced' }), v = run(orders8, { objective: 'vehicles' }), d = run(orders8, { objective: 'distance' });
+  allUnitsPlaced(b, orders8);
+  assert.ok(b.totals.distanceKm <= v.totals.distanceKm + 1e-6, 'km ' + b.totals.distanceKm + ' > ' + v.totals.distanceKm);
+  assert.ok(b.totals.vehicles <= d.totals.vehicles, 'xe ' + b.totals.vehicles + ' > ' + d.totals.vehicles);
+});
+
 console.log(report.join('\n'));
 console.log('\n' + passed + ' kiểm thử đạt' + (process.exitCode ? ', CÓ LỖI' : ''));

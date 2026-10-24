@@ -93,6 +93,12 @@ label.inline{display:inline-flex;gap:6px;align-items:center}
 .trip{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:12px 0}
 .trip h3{margin:4px 0}
 progress{width:260px}
+/* GĐ4 */
+.dragrow{cursor:grab}.dragrow:active{cursor:grabbing}
+.trip.dropping,.newtrip.dropping{outline:2px dashed var(--accent,#2f6fed);background:#eef3ff}
+.newtrip{border:2px dashed var(--line);border-radius:8px;padding:14px;text-align:center;color:var(--mut);margin:12px 0}
+td.bestcell{background:#dcf3e4;font-weight:700}
+.sessionbtns{margin-left:auto;display:flex;gap:8px}.sess{background:#2a5a86;color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer}.sess:hover{background:#3a6d9c}
 
 </style>
 </head>
@@ -805,7 +811,7 @@ const Solver = (function () {
       [0, 2, 1].forEach(function (score) { [false, true].forEach(function (rotFirst) { runs.push({ order: o, rotFirst: rotFirst, score: score }); }); });
     });
     // Dữ liệu lớn: giảm số cấu hình để giữ tốc độ.
-    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 12 : runs.length;
+    const budget = opts.quick ? 4 : cand.length > 400 ? 6 : cand.length > 200 ? 8 : runs.length;
     const totalVol = V.L * V.W * V.H;
     let best = null;
     const chosen = runs.filter(function (cf) { return !cf.late; }).slice(0, budget).concat(runs.filter(function (cf) { return cf.late; }));
@@ -815,7 +821,7 @@ const Solver = (function () {
       const relaxedCount = r.placed.filter(function (b) { return b.relaxed; }).length;
       const m = vehicleMetrics(r.placed, V, payload);
       let q = v - relaxedCount * 0.05 * totalVol;
-      if (m.warnings.length) q -= 0.02 * totalVol;
+      if (m.warnings.length) q -= 0.002 * totalVol; // cảnh báo trọng tâm chỉ là tiêu chí phụ: chở thêm được hàng quan trọng hơn
       if (!best || q > best.q + EPS) best = { r: r, q: q };
       if (opts.onProgress) opts.onProgress((idx + 1) / chosen.length);
     });
@@ -923,6 +929,7 @@ const Solver = (function () {
  * trong giới hạn thời gian, có thể dừng giữa chừng và lấy phương án tốt nhất hiện có; (6) xếp lần cuối ở chất lượng cao. */
 const Planner = (function () {
   const S = (typeof Solver !== 'undefined') ? Solver : require('./solver.js');
+  const BALANCED_KM = 120;
   const FALLBACK_KM = 60;
   const SAME_REGION_KM = 5;
   const PROXY_FILL = 0.92;   // ước lượng sơ bộ: xe đầy tối đa 92% thể tích bao khối
@@ -952,7 +959,7 @@ const Planner = (function () {
       if (memo.has(k)) return memo.get(k);
       let d;
       if (p.region && q.region && matrix.has(p.region + '|' + q.region)) d = matrix.get(p.region + '|' + q.region);
-      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = haversine(p, q) * rf;
+      else if (isNum(p.lat) && isNum(p.lng) && isNum(q.lat) && isNum(q.lng)) d = Math.max(haversine(p, q) * rf, SAME_REGION_KM); // hai điểm khác nhau không cách 0 km dù cùng tọa độ xấp xỉ
       else if (p.region && q.region && p.region === q.region) d = SAME_REGION_KM;
       else { d = FALLBACK_KM; if (flags) flags.estimated = true; }
       memo.set(k, d); memo.set(q.key + '>' + p.key, d);
@@ -1194,6 +1201,7 @@ const Planner = (function () {
       let d = 0, cost = 0, stops = 0, capacity = 0;
       routes.forEach(function (r) { d += r.dist; cost += routeCost(r); stops += r.seq.length; capacity += r.vehicle ? r.vehicle.volume : 0; });
       if (objective === 'distance') return d * 1e4 + nV * 10 + capacity * 0.01;
+      if (objective === 'balanced') return (d + nV * BALANCED_KM) * 1e3 + capacity * 0.01; // thêm một xe tương đương đi thêm BALANCED_KM km
       if (objective === 'cost') return (costKnown ? cost : capacity * 1000) * 1e3 + d;
       if (objective === 'stops') return stops * 1e9 + nV * 1e6 + d * 1e2 + capacity;
       return nV * 1e9 + d * 1e3 + capacity; // ít xe nhất
@@ -1401,14 +1409,21 @@ const Planner = (function () {
 
     function finalize(rs, quick) {
       const trips = rs.slice().sort(function (a, b) { return b.vol - a.vol; }).map(function (r, k) {
-        const pack = quick ? r.pack : packRoute(r.units, r.vehicle, false);
+        let pack = quick ? r.pack : packRoute(r.units, r.vehicle, false);
+        let fallbackNote = null;
+        if (!quick && pack.unplaced.length) {
+          // Xếp kỹ giữ đúng thứ tự dỡ nhưng bỏ sót hàng: dùng cách xếp chở hết (nới thứ tự dỡ, có cảnh báo đỏ) nếu có.
+          const q = packRoute(r.units, r.vehicle, true);
+          if (q.unplaced.length < pack.unplaced.length) { pack = q; fallbackNote = 'Chở hết hàng chỉ khi nới thứ tự dỡ hàng; xem cảnh báo đỏ ở chuyến này.'; }
+        }
         const m = pack.metrics;
         const stops = r.seq.map(function (p, i) {
           const ents = r.entities.filter(function (e) { return e.locs.some(function (l) { return l.key === p.key; }); });
           const us = r.units.filter(function (u) { return u.stop === i + 1; });
-          return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', customers: Array.from(new Set(ents.map(function (e) { return e.name; }))), orderIds: Array.from(new Set([].concat.apply([], ents.map(function (e) { return e.members; })))), kg: weightOf(us), blocks: us.length, legKm: i === 0 ? dist(depot, p) : dist(r.seq[i - 1], p) };
+          return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', lat: p.lat, lng: p.lng, customers: Array.from(new Set(ents.map(function (e) { return e.name; }))), orderIds: Array.from(new Set([].concat.apply([], ents.map(function (e) { return e.members; })))), kg: weightOf(us), blocks: us.length, legKm: i === 0 ? dist(depot, p) : dist(r.seq[i - 1], p) };
         });
         const notes = r.notes.slice();
+        if (fallbackNote) notes.push(fallbackNote);
         const head = r.vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng';
         const rej = (r.rejected || []).filter(function (x) { return /không xếp vừa|thiếu thể tích|quá tải/.test(x); });
         if (rej.length) notes.push('Chọn ' + r.vehicle.name + ' vì xe nhỏ hơn không đủ (' + rej.join('; ') + ').');
@@ -1428,7 +1443,45 @@ const Planner = (function () {
     }
   }
 
-  const api = { plan: plan, makeDistance: makeDistance, sequence: sequence, tourLength: tourLength, haversine: haversine };
+  /* Dựng lại một chuyến từ danh sách khối (dùng khi người dùng kéo thả đơn giữa các chuyến hoặc đổi xe).
+   * locs: {locKey: {key, lat, lng, region, address}}. Trả chuyến cùng dạng với kết quả của plan(). */
+  function buildTrip(units, vehicle, locs, depot, settings, notes) {
+    settings = settings || {};
+    const flags = { estimated: false };
+    const dist = makeDistance(settings, flags);
+    const keys = [];
+    units.forEach(function (u) { if (keys.indexOf(u.locKey) < 0) keys.push(u.locKey); });
+    const pts = keys.map(function (k) { return locs[k] || { key: k, region: '', address: '' }; });
+    const seq = sequence(pts, depot, dist, null);
+    const us = units.map(function (u) { return Object.assign({}, u, { stop: seq.findIndex(function (p) { return p.key === u.locKey; }) + 1 }); });
+    let pack = S.packVehicle(us, vehicle, { gap: settings.gap || 0, estimateExtra: true });
+    if (pack.unplaced.length) {
+      const q = S.packVehicle(us, vehicle, { gap: settings.gap || 0, quick: true });
+      if (q.unplaced.length < pack.unplaced.length) { pack = q; notes = (notes || []).concat(['Chở hết hàng chỉ khi nới thứ tự dỡ hàng; xem cảnh báo đỏ ở chuyến này.']); }
+    }
+    const m = pack.metrics;
+    const stops = seq.map(function (p, i) {
+      const sus = us.filter(function (u) { return u.stop === i + 1; });
+      return { seq: i + 1, locKey: p.key, region: p.region || '', address: p.address || '', lat: p.lat, lng: p.lng,
+        customers: Array.from(new Set(sus.map(function (u) { return u.customer; }))),
+        orderIds: Array.from(new Set(sus.map(function (u) { return String(u.id).split('|')[0]; }))),
+        kg: weightOf(sus), blocks: sus.length, legKm: i === 0 ? dist(depot, p) : dist(seq[i - 1], p) };
+    });
+    return {
+      no: 0, vehicle: vehicle, pack: pack, units: us, stops: stops, distanceKm: tourLength(seq, depot, dist),
+      cost: isNum(vehicle.cost) ? vehicle.cost : null, summary: vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng',
+      notes: notes || [], orders: Array.from(new Set(us.map(function (u) { return String(u.id).split('|')[0]; }))),
+      volumePct: m.volumePct, weightPct: m.weightPct, warnings: pack.warnings.slice(), estimated: flags.estimated,
+    };
+  }
+
+  function totalsOf(trips) {
+    let km = 0, cost = 0, known = true, stops = 0;
+    trips.forEach(function (t) { km += t.distanceKm; if (t.cost === null || t.cost === undefined) known = false; else cost += t.cost; stops += t.stops.length; });
+    return { vehicles: trips.length, distanceKm: km, cost: known ? cost : null, stops: stops, avgVolumePct: trips.length ? trips.reduce(function (s, t) { return s + t.volumePct; }, 0) / trips.length : 0 };
+  }
+
+  const api = { buildTrip: buildTrip, totalsOf: totalsOf, plan: plan, makeDistance: makeDistance, sequence: sequence, tourLength: tourLength, haversine: haversine };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   return api;
 })();
@@ -2888,14 +2941,15 @@ const View3D = (function () {
   'use strict';
   const X = window.XEH;
   const el = X.el, $ = X.$, nf = X.nf, state = X.state;
-  const OBJ = { vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất', stops: 'Ít điểm dừng nhất' };
+  const OBJ = { balanced: 'Cân bằng (gần nhau, ít xe)', vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất', stops: 'Ít điểm dừng nhất' };
   const OBJ_HINT = {
+    balanced: 'Thêm một xe được coi như đi thêm khoảng 120 km: ghép các điểm giao gần nhau, không ghép khách xa nhau chỉ để bớt một xe.',
     vehicles: 'Dùng ít chuyến xe nhất có thể; khi bằng nhau thì chọn phương án ngắn hơn.',
     distance: 'Chạy tổng quãng đường ngắn nhất, có thể phải dùng nhiều xe hơn.',
     cost: 'Cần nhập cước/chi phí mỗi chuyến cho từng loại xe (tab Xe). Nếu thiếu, hệ thống dùng mục tiêu "ít xe nhất".',
     stops: 'Gom các đơn cùng điểm giao để giảm số lần dừng.',
   };
-  let worker = null, running = false, latest = null, host = null, ui = {};
+  let worker = null, running = false, host = null, ui = {};
 
   function depotLoc() {
     const d = state.depot, lat = Model.num(d.lat), lng = Model.num(d.lng);
@@ -2937,49 +2991,145 @@ const View3D = (function () {
 
   function stopWorker() { if (worker) { worker.terminate(); worker = null; } }
 
-  function run() {
+  // Chạy bộ gom đơn trong Web Worker. Trả Promise<{plan, stopped}>; cancelJob() dừng và lấy phương án tạm tốt nhất.
+  let job = null;
+  function solve(input, onProgress) {
+    return new Promise(function (resolve) {
+      let best = null, done = false;
+      const end = function (plan, stopped) { if (done) return; done = true; stopWorker(); job = null; resolve({ plan: plan || best, stopped: !!stopped }); };
+      job = { cancel: function () { end(null, true); } };
+      try {
+        const glue = '\nonmessage=function(e){var d=e.data;var last=0;var r=Planner.plan(d.input,{onProgress:function(p){var t=Date.now();if(t-last>400){last=t;postMessage({progress:{phase:p.phase,ratio:p.ratio,plan:p.plan||null}});}}});postMessage({result:r});};';
+        stopWorker();
+        worker = new Worker(URL.createObjectURL(new Blob([$('pure-src').textContent + glue], { type: 'text/javascript' })));
+        worker.onmessage = function (e) {
+          if (e.data.result) end(e.data.result, false);
+          else if (e.data.progress) { if (e.data.progress.plan) best = e.data.progress.plan; if (onProgress) onProgress(e.data.progress, best); }
+        };
+        worker.onerror = function () { end(Planner.plan(Object.assign({}, input, { budgetMs: 4000 })), false); };
+        worker.postMessage({ input: input });
+      } catch (err) { end(Planner.plan(Object.assign({}, input, { budgetMs: 4000 })), false); }
+    });
+  }
+
+  function checkInput(b) {
+    if (!b.input.orders.length) { X.toast('Chưa có đơn hợp lệ nào được tick ở tab "Đơn hàng".'); return false; }
+    if (!b.input.vehicles.length) { X.toast('Chưa chọn loại xe hợp lệ nào. Vào tab "Xe" để thêm, hoặc tick xe bên dưới.'); return false; }
+    return true;
+  }
+  const costOk = function (input) { return input.vehicles.every(function (v) { return v.cost !== null && v.cost !== undefined; }); };
+
+  // Chữ ký dữ liệu đầu vào để nhận biết kế hoạch đã cũ khi đơn / xe thay đổi sau đó.
+  function sigOf(input) {
+    return JSON.stringify([input.orders.map(function (o) { return [o.id, o.units.length, Math.round(o.units.reduce(function (s, u) { return s + u.weight; }, 0)), o.loc.key]; }), input.vehicles.map(function (v) { return [v.id, v.L, v.W, v.H, v.payload]; }), input.constraints]);
+  }
+
+  function attachCtx(plan, b, objective) {
+    const locs = {};
+    b.input.orders.forEach(function (o) { locs[o.loc.key] = o.loc; });
+    plan.ctx = { locs: locs, depot: b.input.depot, settings: b.input.settings, vehicles: b.input.vehicles };
+    plan.skipped = b.skipped;
+    plan.sig = sigOf(b.input);
+    plan.objective = objective || plan.objective;
+    return plan;
+  }
+
+  const progressTo = function (p, best) {
+    ui.bar.value = Math.round((p.ratio || 0) * 100);
+    ui.phase.textContent = (p.phase || 'Đang tính') + '… ' + Math.round((p.ratio || 0) * 100) + '%' + (best ? ' (đã có phương án tạm: ' + best.totals.vehicles + ' xe)' : '');
+  };
+
+  async function run() {
     if (running) return;
     const b = buildInput();
-    if (!b.input.orders.length) { X.toast('Chưa có đơn hợp lệ nào được tick ở tab "Đơn hàng".'); return; }
-    if (!b.input.vehicles.length) { X.toast('Chưa chọn loại xe hợp lệ nào. Vào tab "Xe" để thêm, hoặc tick xe bên dưới.'); return; }
-    if (b.input.objective === 'cost' && !b.input.vehicles.every(function (v) { return v.cost !== null && v.cost !== undefined; })) {
-      X.toast('Mục tiêu "Rẻ chi phí nhất" cần cước của mọi loại xe đã chọn. Tạm dùng "Ít xe nhất".');
-      b.input.objective = 'vehicles';
-    }
-    running = true; latest = null;
-    state.plan = null;
-    state.planSkipped = b.skipped;
+    if (!checkInput(b)) return;
+    if (b.input.objective === 'cost' && !costOk(b.input)) { X.toast('Mục tiêu "Rẻ chi phí nhất" cần cước của mọi loại xe đã chọn. Tạm dùng "Ít xe nhất".'); b.input.objective = 'vehicles'; }
+    running = true; state.plan = null; history.length = 0;
     update();
     const t0 = performance.now();
-    const finish = function (plan, stopped) {
-      running = false; stopWorker();
-      if (plan) { plan.stopped = !!stopped; plan.wallMs = performance.now() - t0; plan.skipped = b.skipped; state.plan = plan; }
-      update();
-    };
-    try {
-      const glue = '\nonmessage=function(e){var d=e.data;var last=0;var r=Planner.plan(d.input,{onProgress:function(p){var t=Date.now();if(t-last>400){last=t;postMessage({progress:{phase:p.phase,ratio:p.ratio,plan:p.plan||null}});}}});postMessage({result:r});};';
-      stopWorker();
-      worker = new Worker(URL.createObjectURL(new Blob([$('pure-src').textContent + glue], { type: 'text/javascript' })));
-      worker.onmessage = function (e) {
-        if (e.data.result) finish(e.data.result, false);
-        else if (e.data.progress) {
-          const p = e.data.progress;
-          if (p.plan) latest = p.plan;
-          ui.bar.value = Math.round((p.ratio || 0) * 100);
-          ui.phase.textContent = (p.phase || 'Đang tính') + '… ' + Math.round((p.ratio || 0) * 100) + '%' + (latest ? ' (đã có phương án tạm: ' + latest.totals.vehicles + ' xe)' : '');
-        }
-      };
-      worker.onerror = function () { stopWorker(); const r = Planner.plan(Object.assign({}, b.input, { budgetMs: 4000 })); finish(r, false); };
-      worker.postMessage({ input: b.input });
-    } catch (err) {
-      finish(Planner.plan(Object.assign({}, b.input, { budgetMs: 4000 })), false);
-    }
+    const r = await solve(b.input, progressTo);
+    running = false;
+    if (r.plan) { attachCtx(r.plan, b, b.input.objective); r.plan.stopped = r.stopped; r.plan.wallMs = performance.now() - t0; state.plan = r.plan; if (r.stopped) X.toast('Đã dừng. Đang hiển thị phương án tốt nhất tìm được tới lúc này.'); }
+    else X.toast('Đã dừng, chưa có phương án nào.');
+    update();
   }
+
+  // So sánh: chạy lần lượt các mục tiêu và lưu từng phương án để đặt cạnh nhau.
+  async function compareAll() {
+    if (running) return;
+    const b = buildInput();
+    if (!checkInput(b)) return;
+    const objs = costOk(b.input) ? ['balanced', 'vehicles', 'distance', 'cost', 'stops'] : ['balanced', 'vehicles', 'distance', 'stops'];
+    running = true; cancelAll = false;
+    update();
+    const out = [];
+    for (let i = 0; i < objs.length && !cancelAll; i++) {
+      ui.phase.textContent = 'So sánh ' + (i + 1) + '/' + objs.length + ': ' + OBJ[objs[i]] + '…';
+      const input = Object.assign({}, b.input, { objective: objs[i], budgetMs: 5000 });
+      const r = await solve(input, function (p) { ui.bar.value = Math.round(((i + (p.ratio || 0)) / objs.length) * 100); });
+      if (r.plan && r.plan.totals) out.push({ name: OBJ[objs[i]], plan: attachCtx(r.plan, b, objs[i]) });
+    }
+    running = false;
+    if (out.length) { state.savedPlans = out.concat((state.savedPlans || []).filter(function (s) { return !out.some(function (o) { return o.name === s.name; }); })).slice(0, 6); state.plan = out[0].plan; history.length = 0; }
+    update();
+  }
+  let cancelAll = false;
 
   function stop() {
     if (!running) return;
-    if (latest) { X.toast('Đã dừng. Đang hiển thị phương án tốt nhất tìm được tới lúc này.'); running = false; stopWorker(); latest.stopped = true; latest.skipped = state.planSkipped || []; state.plan = latest; update(); }
-    else { running = false; stopWorker(); X.toast('Đã dừng, chưa có phương án nào.'); update(); }
+    cancelAll = true;
+    if (job) job.cancel();
+  }
+
+  /* ---------- Chỉnh tay: kéo thả điểm giao giữa các chuyến, đổi xe ---------- */
+  const history = [];
+  function snapshot() { history.push({ trips: state.plan.trips.slice(), totals: state.plan.totals, edited: state.plan.edited }); if (history.length > 20) history.shift(); }
+  function undo() {
+    const h = history.pop();
+    if (!h || !state.plan) return;
+    state.plan.trips = h.trips; state.plan.totals = h.totals; state.plan.edited = h.edited;
+    update();
+  }
+  function finishEdit(P, trips, msg) {
+    trips.forEach(function (t, i) { t.no = i + 1; });
+    P.trips = trips; P.totals = Planner.totalsOf(trips); P.edited = true;
+    const bad = trips.filter(function (t) { return t.pack.unplaced.length; });
+    if (bad.length) X.toast(msg + ' Chuyến ' + bad.map(function (t) { return t.no; }).join(', ') + ' có khối không lên được xe, xem cảnh báo đỏ.');
+    update();
+  }
+  function moveStop(fromNo, locKey, toNo) {
+    const P = state.plan;
+    if (!P || !P.ctx || fromNo === toNo) return;
+    const from = P.trips[fromNo - 1];
+    const moved = from.units.filter(function (u) { return u.locKey === locKey; });
+    const stopInfo = from.stops.find(function (s) { return s.locKey === locKey; });
+    const label = stopInfo ? stopInfo.customers.join(', ') : 'điểm giao';
+    snapshot();
+    const rest = from.units.filter(function (u) { return u.locKey !== locKey; });
+    const c = P.ctx;
+    let trips = P.trips.slice();
+    let target;
+    if (toNo === 'new') {
+      const veh = from.vehicle;
+      target = Planner.buildTrip(moved, veh, c.locs, c.depot, c.settings, ['Chuyến tạo thủ công: anh kéo "' + label + '" sang đây.']);
+      trips.push(target);
+    } else {
+      const to = P.trips[toNo - 1];
+      target = Planner.buildTrip(to.units.concat(moved), to.vehicle, c.locs, c.depot, c.settings, to.notes.filter(function (n) { return /thủ công|bằng tay/.test(n); }).concat(['Anh chuyển "' + label + '" sang chuyến này bằng tay.']));
+      trips[toNo - 1] = target;
+    }
+    if (rest.length) trips[fromNo - 1] = Planner.buildTrip(rest, from.vehicle, c.locs, c.depot, c.settings, from.notes.filter(function (n) { return /thủ công|bằng tay/.test(n); }).concat(['Đã chuyển "' + label + '" sang chuyến khác bằng tay.']));
+    else trips = trips.filter(function (t) { return t !== from; });
+    finishEdit(P, trips, 'Đã chuyển.');
+  }
+  function changeVehicle(no, vehId) {
+    const P = state.plan, t = P.trips[no - 1];
+    const v = P.ctx.vehicles.find(function (x) { return x.id === vehId; });
+    if (!v || v.id === t.vehicle.id) return;
+    snapshot();
+    const c = P.ctx, trips = P.trips.slice();
+    trips[no - 1] = Planner.buildTrip(t.units, v, c.locs, c.depot, c.settings, ['Anh đổi sang ' + v.name + ' bằng tay.']);
+    finishEdit(P, trips, 'Đã đổi xe.');
   }
 
   /* ---------- Hiển thị ---------- */
@@ -3016,8 +3166,17 @@ const View3D = (function () {
   function tripCard(P, t) {
     const lines = [];
     t.stops.forEach(function (s) {
-      lines.push(el('tr', null, el('td', { class: 'num' }, s.seq), el('td', null, s.customers.join(', '), el('div', { class: 'sub' }, [s.region, s.address].filter(Boolean).join(' – ') || 'chưa có địa chỉ')),
-        el('td', { class: 'num' }, nf(s.blocks, 0)), el('td', { class: 'num' }, X.fmt.kg(s.kg)), el('td', { class: 'num' }, nf(s.legKm, 0) + ' km')));
+      const row = el('tr', { class: 'dragrow', draggable: 'true', title: 'Kéo sang chuyến khác để chuyển điểm giao này' }, el('td', { class: 'num' }, '⠿ ' + s.seq), el('td', null, s.customers.join(', '), el('div', { class: 'sub' }, [s.region, s.address].filter(Boolean).join(' – ') || 'chưa có địa chỉ')),
+        el('td', { class: 'num' }, nf(s.blocks, 0)), el('td', { class: 'num' }, X.fmt.kg(s.kg)), el('td', { class: 'num' }, nf(s.legKm, 0) + ' km'));
+      if (P.ctx) {
+        const mv = el('select', { title: 'Chuyển điểm giao này sang chuyến khác (dùng khi không kéo thả được, ví dụ trên điện thoại)', onchange: function () { if (mv.value) moveStop(t.no, s.locKey, mv.value === 'new' ? 'new' : Number(mv.value)); } },
+          el('option', { value: '' }, 'Chuyển tới…'),
+          P.trips.filter(function (x) { return x.no !== t.no; }).map(function (x) { return el('option', { value: String(x.no) }, 'Chuyến ' + x.no); }),
+          el('option', { value: 'new' }, 'Chuyến mới'));
+        row.appendChild(el('td', null, mv));
+      }
+      row.addEventListener('dragstart', function (ev) { ev.dataTransfer.setData('text/plain', JSON.stringify({ no: t.no, loc: s.locKey })); ev.dataTransfer.effectAllowed = 'move'; });
+      lines.push(row);
     });
     const veh = t.vehicle;
     const openBtn = el('button', { class: 'primary', onclick: function () {
@@ -3030,14 +3189,67 @@ const View3D = (function () {
       pl.forEach(function (p) { grid[p.uid] = { row: xs.indexOf(Math.round(p.x)) + 1, col: ys.indexOf(Math.round(p.y)) + 1 }; });
       X.openResult({ veh: veh, vehName: veh.name, r: t.pack, byId: byId, skipped: [], ms: P.elapsedMs || 0, totalUnits: t.units.length, grid: grid, title: 'Chuyến ' + t.no + ' – ' + veh.name });
     } }, 'Xem 3D chuyến này');
-    return el('div', { class: 'trip' },
-      el('div', { class: 'toolbar' }, el('h3', null, 'Chuyến ' + t.no + ': ' + veh.name), el('span', { class: 'spacer' }), openBtn),
+    const vehSel = P.ctx ? el('select', { title: 'Đổi loại xe cho chuyến này', onchange: function () { changeVehicle(t.no, vehSel.value); } },
+      P.ctx.vehicles.map(function (v) { return el('option', { value: v.id, selected: v.id === veh.id }, v.name); })) : null;
+    const card = el('div', { class: 'trip' },
+      el('div', { class: 'toolbar' }, el('h3', null, 'Chuyến ' + t.no + ': ' + veh.name), el('span', { class: 'spacer' }), vehSel, openBtn),
       el('div', { class: 'hint' }, t.summary + ' · ' + nf(t.distanceKm, 0) + ' km · ' + (t.cost === null ? 'chưa có cước' : nf(t.cost, 0) + ' đ')),
       el('div', { class: 'tablewrap' }, el('table', null,
-        el('thead', null, el('tr', null, ['Thứ tự', 'Khách / điểm giao', 'Số khối', 'Khối lượng', 'Quãng đường tới điểm'].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, lines))),
+        el('thead', null, el('tr', null, ['Thứ tự', 'Khách / điểm giao', 'Số khối', 'Khối lượng', 'Quãng đường tới điểm', ''].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, lines))),
       t.notes.map(function (n) { return el('div', { class: 'note ok' }, n); }),
       t.warnings.map(function (n) { return el('div', { class: 'note warn' }, n); }),
-      t.pack.unplaced && t.pack.unplaced.length ? el('div', { class: 'note err' }, nf(t.pack.unplaced.length, 0) + ' khối chưa xếp được vào chuyến này.') : null);
+      t.pack.unplaced && t.pack.unplaced.length ? el('div', { class: 'note err' }, nf(t.pack.unplaced.length, 0) + ' khối chưa xếp được vào chuyến này (thử đổi xe lớn hơn hoặc kéo bớt điểm giao sang chuyến khác).') : null);
+    dropTarget(card, t.no);
+    return card;
+  }
+
+  function parseDrag(ev) { try { return JSON.parse(ev.dataTransfer.getData('text/plain')); } catch (e) { return null; } }
+  function dropTarget(node, no) {
+    node.addEventListener('dragover', function (ev) { ev.preventDefault(); node.classList.add('dropping'); });
+    node.addEventListener('dragleave', function () { node.classList.remove('dropping'); });
+    node.addEventListener('drop', function (ev) {
+      ev.preventDefault(); node.classList.remove('dropping');
+      const d = parseDrag(ev);
+      if (d) moveStop(d.no, d.loc, no);
+    });
+  }
+
+  function actionsBar(P) {
+    const E = X.exports || {};
+    const saved = state.savedPlans || [];
+    return el('div', { class: 'toolbar' },
+      el('button', { onclick: function () { undo(); }, disabled: !history.length }, '↶ Hoàn tác chỉnh tay'),
+      el('button', { onclick: function () {
+        const name = prompt('Đặt tên để lưu phương án này (so sánh bên dưới):', (OBJ[P.objective] || 'Phương án') + (P.edited ? ' (đã chỉnh tay)' : ''));
+        if (!name) return;
+        state.savedPlans = [{ name: name, plan: JSON.parse(JSON.stringify(P)) }].concat(saved.filter(function (s) { return s.name !== name; })).slice(0, 6);
+        update();
+      } }, 'Lưu phương án này để so sánh'),
+      el('span', { class: 'spacer' }),
+      el('button', { onclick: function () { E.excel && E.excel(P); } }, 'Xuất Excel'),
+      el('button', { onclick: function () { E.pdf && E.pdf(P); } }, 'Xuất PDF / In'),
+      P.edited ? el('span', { class: 'tag warn' }, 'Đã chỉnh tay') : null);
+  }
+
+  function comparePanel(P) {
+    const saved = state.savedPlans || [];
+    if (!saved.length) return null;
+    const best = function (key, low) { const vals = saved.map(function (s) { return s.plan.totals[key]; }).filter(function (v) { return v !== null && v !== undefined; }); return vals.length ? (low ? Math.min.apply(null, vals) : Math.max.apply(null, vals)) : null; };
+    const bV = best('vehicles', true), bK = best('distanceKm', true), bC = best('cost', true), bS = best('stops', true), bF = best('avgVolumePct', false);
+    const cell = function (v, b, text) { return el('td', { class: 'num' + (v !== null && v === b ? ' bestcell' : '') }, text); };
+    const rows = saved.map(function (s, i) {
+      const t = s.plan.totals;
+      return el('tr', null, el('td', null, el('b', null, s.name), s.plan.edited ? el('div', { class: 'sub' }, 'đã chỉnh tay') : null),
+        cell(t.vehicles, bV, nf(t.vehicles, 0)), cell(t.distanceKm, bK, nf(t.distanceKm, 0) + ' km'), cell(t.cost, bC, t.cost === null ? '–' : nf(t.cost, 0) + ' đ'),
+        cell(t.stops, bS, nf(t.stops, 0)), cell(t.avgVolumePct, bF, nf(t.avgVolumePct, 0) + '%'),
+        el('td', { class: 'num' }, nf((s.plan.unassigned || []).length, 0)),
+        el('td', { class: 'actions' }, el('button', { onclick: function () { state.plan = s.plan; history.length = 0; update(); } }, 'Dùng phương án này'),
+          el('button', { class: 'danger', onclick: function () { state.savedPlans = saved.filter(function (x) { return x !== s; }); update(); } }, 'Xóa')));
+    });
+    return el('div', { class: 'cpanel' }, el('h3', null, 'So sánh phương án'),
+      el('div', { class: 'tablewrap' }, el('table', null,
+        el('thead', null, el('tr', null, ['Phương án', 'Số xe', 'Quãng đường', 'Chi phí', 'Điểm dừng', 'Độ đầy TB', 'Đơn chưa xếp', ''].map(function (h) { return el('th', { text: h }); }))), el('tbody', null, rows))),
+      el('div', { class: 'hint' }, 'Ô nền xanh là giá trị tốt nhất theo từng cột. Quãng đường là ước tính; mỗi phương án là kết quả heuristic, không phải tối ưu tuyệt đối.'));
   }
 
   function resultPanel() {
@@ -3045,20 +3257,31 @@ const View3D = (function () {
     const box = el('div', { class: 'results' });
     if (running) return box;
     if (!P) return box.appendChild(el('div', { class: 'empty' }, 'Chưa có kế hoạch. Bấm "Lập kế hoạch chuyến".')), box;
+    if (P.sig && sigOf(buildInput().input) !== P.sig) box.appendChild(el('div', { class: 'note warn' }, 'Đơn hàng, xe hoặc ràng buộc đã thay đổi sau khi lập kế hoạch này. Bấm "Lập kế hoạch chuyến" để tính lại.'));
     if (P.stopped) box.appendChild(el('div', { class: 'note warn' }, 'Đã dừng sớm: đây là phương án tốt nhất tìm được tới lúc dừng, có thể chưa tối ưu.'));
     (P.skipped || []).forEach(function (m) { box.appendChild(el('div', { class: 'note warn' }, 'Bỏ qua: ' + m)); });
     (P.warnings || []).forEach(function (m) { box.appendChild(el('div', { class: 'note warn' }, m)); });
     const c = summaryCards(P);
     if (c) box.appendChild(c);
+    box.appendChild(actionsBar(P));
+    const cmp = comparePanel(P);
+    if (cmp) box.appendChild(cmp);
     (P.unassigned || []).forEach(function (u) { box.appendChild(el('div', { class: 'note err' }, 'Chưa xếp được đơn "' + u.name + '": ' + u.reason)); });
     P.trips.forEach(function (t) { box.appendChild(tripCard(P, t)); });
+    if (P.ctx && P.trips.length) {
+      const nz = el('div', { class: 'newtrip' }, 'Thả điểm giao vào đây để tạo chuyến mới');
+      nz.addEventListener('dragover', function (ev) { ev.preventDefault(); nz.classList.add('dropping'); });
+      nz.addEventListener('dragleave', function () { nz.classList.remove('dropping'); });
+      nz.addEventListener('drop', function (ev) { ev.preventDefault(); nz.classList.remove('dropping'); const d = parseDrag(ev); if (d) moveStop(d.no, d.loc, 'new'); });
+      box.appendChild(nz);
+    }
     if (P.trips.length) box.appendChild(el('div', { class: 'hint' }, 'Tính trong ' + nf((P.wallMs || P.elapsedMs || 0) / 1000, 1) + ' giây. Đây là kết quả của phương pháp heuristic (gom theo tiết kiệm, cải thiện cục bộ), không đảm bảo tối ưu tuyệt đối; khoảng cách là ước tính, không phải quãng đường thực.'));
     return box;
   }
 
   function update() {
     if (!host) return;
-    ui.run.disabled = running; ui.stop.hidden = !running; ui.progress.hidden = !running;
+    ui.run.disabled = running; ui.cmp.disabled = running; ui.stop.hidden = !running; ui.progress.hidden = !running;
     if (!running) ui.bar.value = 0;
     ui.results.replaceWith(ui.results = resultPanel());
   }
@@ -3073,7 +3296,8 @@ const View3D = (function () {
     ui.phase = el('span', { class: 'hint' });
     ui.progress = el('div', { class: 'toolbar', hidden: true }, ui.bar, ui.phase);
     ui.results = el('div');
-    host.appendChild(el('div', { class: 'toolbar' }, ui.run, ui.stop, el('span', { class: 'hint' }, nf(nInc, 0) + ' đơn đang được tick để lập kế hoạch.')));
+    ui.cmp = el('button', { onclick: compareAll, title: 'Chạy lần lượt các mục tiêu và đặt cạnh nhau' }, 'So sánh các mục tiêu');
+    host.appendChild(el('div', { class: 'toolbar' }, ui.run, ui.cmp, ui.stop, el('span', { class: 'hint' }, nf(nInc, 0) + ' đơn đang được tick để lập kế hoạch.')));
     host.appendChild(ui.progress);
     host.appendChild(optionsPanel());
     host.appendChild(ui.results);
@@ -3081,6 +3305,183 @@ const View3D = (function () {
   }
   X.tabs.trips = render;
   X.buildPlanInput = buildInput;
+})();
+
+</script>
+<script>
+/* XUẤT FILE VÀ LƯU PHIÊN: Excel (SheetJS), PDF qua hộp thoại In của trình duyệt, lưu / mở phiên làm việc dạng JSON. */
+(function () {
+  'use strict';
+  const X = window.XEH;
+  const state = X.state, nf = X.nf;
+  const OBJ = { vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất', stops: 'Ít điểm dừng nhất' };
+  const SESSION_VERSION = 1;
+
+  const stamp = function () { const d = new Date(); const p = function (n) { return ('0' + n).slice(-2); }; return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()); };
+  function download(name, mime, data) {
+    const url = URL.createObjectURL(new Blob([data], { type: mime }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 500);
+  }
+  const round = function (v, d) { const k = Math.pow(10, d || 0); return Math.round(v * k) / k; };
+
+  // Gom các dòng dữ liệu của kế hoạch để dùng chung cho Excel và PDF.
+  function tables(P) {
+    const t = P.totals || {};
+    const summary = [
+      ['Mục tiêu', OBJ[P.objective] || ''],
+      ['Số xe', t.vehicles], ['Tổng quãng đường (km, ước tính)', round(t.distanceKm || 0, 0)],
+      ['Tổng chi phí (đ)', t.cost === null || t.cost === undefined ? 'chưa đủ cước' : t.cost],
+      ['Số điểm dừng', t.stops], ['Độ đầy thể tích trung bình (%)', round(t.avgVolumePct || 0, 0)],
+      ['Đã chỉnh tay', P.edited ? 'Có' : 'Không'], ['Đơn chưa xếp được', (P.unassigned || []).length],
+    ];
+    const trips = [['Chuyến', 'Loại xe', 'Thứ tự giao', 'Khách', 'Khu vực', 'Địa chỉ', 'Số khối', 'Khối lượng (kg)', 'Km tới điểm', 'Đầy thể tích (%)', 'Đầy tải trọng (%)']];
+    const loads = [['Chuyến', 'Thứ tự chất', 'Mã hàng', 'Khách', 'Điểm giao', 'Số ống', 'Khối lượng (kg)', 'Hàng', 'Cột', 'Tầng']];
+    P.trips.forEach(function (tr) {
+      tr.stops.forEach(function (s) {
+        trips.push([tr.no, tr.vehicle.name, s.seq, s.customers.join(', '), s.region, s.address, s.blocks, round(s.kg, 1), round(s.legKm, 0), round(tr.volumePct, 0), round(tr.weightPct, 0)]);
+      });
+      const byId = {};
+      tr.units.forEach(function (u) { byId[u.id] = u; });
+      const pl = tr.pack.placements;
+      const xs = Array.from(new Set(pl.map(function (p) { return Math.round(p.x); }))).sort(function (a, b) { return a - b; });
+      const ys = Array.from(new Set(pl.map(function (p) { return Math.round(p.y); }))).sort(function (a, b) { return a - b; });
+      const pos = {};
+      pl.forEach(function (p) { pos[p.uid] = p; });
+      (tr.pack.loadOrder || []).forEach(function (uid, i) {
+        const u = byId[uid], p = pos[uid];
+        if (!u || !p) return;
+        loads.push([tr.no, i + 1, u.code || u.name, u.customer || '', 'Điểm ' + u.stop, u.tubes, round(u.weight, 1), xs.indexOf(Math.round(p.x)) + 1, ys.indexOf(Math.round(p.y)) + 1, p.tier || 1]);
+      });
+    });
+    return { summary: summary, trips: trips, loads: loads };
+  }
+
+  function excel(P) {
+    if (!window.XLSX) { X.toast('Chưa tải được thư viện Excel (cần mạng lần đầu).'); return; }
+    const T = tables(P);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(T.summary), 'Tổng hợp');
+    const ws = XLSX.utils.aoa_to_sheet(T.trips);
+    ws['!cols'] = [{ wch: 8 }, { wch: 18 }, { wch: 10 }, { wch: 32 }, { wch: 18 }, { wch: 30 }, { wch: 9 }, { wch: 14 }, { wch: 11 }, { wch: 14 }, { wch: 14 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Chuyến');
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(T.loads), 'Thứ tự chất hàng');
+    const un = [['Đơn', 'Lý do']].concat((P.unassigned || []).map(function (u) { return [u.name, u.reason]; }));
+    if (un.length > 1) XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(un), 'Chưa xếp được');
+    const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    download('ke-hoach-chuyen-' + stamp() + '.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', out);
+  }
+
+  /* ---------- PDF: dựng trang báo cáo rồi mở hộp thoại In (chọn "Lưu thành PDF"), giữ đúng chữ Việt ---------- */
+  const esc = function (s) { return String(s === undefined || s === null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); };
+  const PAL = ['#4e79a7', '#f28e2b', '#e15759', '#76b7b2', '#59a14f', '#edc948', '#b07aa1', '#ff9da7', '#9c755f', '#bab0ac'];
+
+  // Hình nhìn từ trên xuống: trục ngang là chiều dài thùng (đầu thùng bên trái, cửa bên phải), trục dọc là chiều rộng.
+  function topView(tr) {
+    const V = tr.vehicle, sc = 640 / V.L, H = Math.round(V.W * sc);
+    const parts = ['<svg xmlns="http://www.w3.org/2000/svg" width="660" height="' + (H + 24) + '" viewBox="0 0 660 ' + (H + 24) + '"><rect x="10" y="10" width="640" height="' + H + '" fill="#fff" stroke="#333"/>'];
+    const byId = {};
+    tr.units.forEach(function (u) { byId[u.id] = u; });
+    tr.pack.placements.slice().sort(function (a, b) { return a.z - b.z; }).forEach(function (p) {
+      const u = byId[p.uid] || {};
+      const col = PAL[((u.stop || 1) - 1) % PAL.length];
+      parts.push('<rect x="' + (10 + p.x * sc).toFixed(1) + '" y="' + (10 + p.y * sc).toFixed(1) + '" width="' + (p.l * sc).toFixed(1) + '" height="' + (p.w * sc).toFixed(1) + '" fill="' + col + '" fill-opacity="0.75" stroke="#222" stroke-width="0.5"/>');
+    });
+    parts.push('<text x="10" y="' + (H + 22) + '" font-size="10" fill="#555">đầu thùng (sát cabin)</text><text x="650" y="' + (H + 22) + '" font-size="10" fill="#555" text-anchor="end">cửa sau</text></svg>');
+    return parts.join('');
+  }
+
+  function pdf(P) {
+    const t = P.totals || {};
+    const w = window.open('', '_blank');
+    if (!w) { X.toast('Trình duyệt chặn cửa sổ mới. Cho phép cửa sổ bật lên cho trang này rồi thử lại.'); return; }
+    const h = ['<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>Kế hoạch chuyến ' + stamp() + '</title><style>',
+      'body{font:12px/1.4 system-ui,"Segoe UI",Roboto,Arial,sans-serif;color:#111;margin:16px}h1{font-size:18px;margin:0 0 4px}h2{font-size:14px;margin:0 0 4px}',
+      'table{border-collapse:collapse;width:100%;margin:6px 0}th,td{border:1px solid #bbb;padding:3px 6px;text-align:left}th{background:#eee}td.n{text-align:right}',
+      '.trip{page-break-inside:avoid;border-top:2px solid #333;margin-top:14px;padding-top:6px}.warn{color:#8a5a00}.err{color:#b42318}.sum td{border:none;padding:1px 14px 1px 0}.hint{color:#555;font-size:11px}',
+      '@media print{.noprint{display:none}}</style></head><body>',
+      '<div class="noprint"><button onclick="window.print()">In / Lưu thành PDF</button></div>',
+      '<h1>Kế hoạch chuyến giao hàng</h1><div class="hint">Lập ngày ' + new Date().toLocaleString('vi-VN') + ' · mục tiêu: ' + esc(OBJ[P.objective] || '') + (P.edited ? ' · đã chỉnh tay' : '') + '</div>',
+      '<table class="sum"><tr><td>Số xe: <b>' + nf(t.vehicles, 0) + '</b></td><td>Quãng đường (ước tính): <b>' + nf(t.distanceKm || 0, 0) + ' km</b></td><td>Chi phí: <b>' + (t.cost === null || t.cost === undefined ? 'chưa đủ cước' : nf(t.cost, 0) + ' đ') + '</b></td><td>Điểm dừng: <b>' + nf(t.stops, 0) + '</b></td><td>Độ đầy TB: <b>' + nf(t.avgVolumePct || 0, 0) + '%</b></td></tr></table>'];
+    (P.unassigned || []).forEach(function (u) { h.push('<div class="err">Chưa xếp được đơn "' + esc(u.name) + '": ' + esc(u.reason) + '</div>'); });
+    P.trips.forEach(function (tr) {
+      h.push('<div class="trip"><h2>Chuyến ' + tr.no + ': ' + esc(tr.vehicle.name) + '</h2><div class="hint">' + esc(tr.summary) + ' · ' + nf(tr.distanceKm, 0) + ' km</div>');
+      h.push('<table><tr><th>Thứ tự giao</th><th>Khách</th><th>Khu vực / địa chỉ</th><th>Số khối</th><th>Khối lượng</th></tr>');
+      tr.stops.forEach(function (s) { h.push('<tr><td>' + s.seq + '</td><td>' + esc(s.customers.join(', ')) + '</td><td>' + esc([s.region, s.address].filter(Boolean).join(' – ')) + '</td><td class="n">' + s.blocks + '</td><td class="n">' + nf(s.kg, 1) + ' kg</td></tr>'); });
+      h.push('</table>' + topView(tr));
+      h.push('<div class="hint">Hình nhìn từ trên xuống, màu theo điểm giao: ' + tr.stops.map(function (s) { return '<span style="color:' + PAL[(s.seq - 1) % PAL.length] + '">■</span> điểm ' + s.seq; }).join(' · ') + '</div>');
+      tr.notes.forEach(function (n) { h.push('<div class="hint">• ' + esc(n) + '</div>'); });
+      tr.warnings.forEach(function (n) { h.push('<div class="warn">⚠ ' + esc(n) + '</div>'); });
+      if (tr.pack.unplaced.length) h.push('<div class="err">' + tr.pack.unplaced.length + ' khối chưa xếp được vào chuyến này.</div>');
+      h.push('</div>');
+    });
+    h.push('<p class="hint">Kết quả là phương án gợi ý theo heuristic, khoảng cách là ước tính. Khi xếp thật cần kiểm tra chằng buộc và an toàn.</p></body></html>');
+    w.document.open(); w.document.write(h.join('')); w.document.close();
+    setTimeout(function () { try { w.focus(); w.print(); } catch (e) { /* người dùng bấm nút In trong trang */ } }, 400);
+  }
+
+  /* ---------- Lưu / mở phiên ---------- */
+  function sessionData() {
+    return {
+      app: 'xep-ong-giay', version: SESSION_VERSION, savedAt: new Date().toISOString(),
+      products: state.products, vehicles: state.vehicles, settings: state.settings, orders: state.orders, depot: state.depot,
+      constraints: state.constraints, planOpts: state.planOpts, plan: state.plan, savedPlans: state.savedPlans || [],
+    };
+  }
+  function saveSession() {
+    download('phien-xep-xe-' + stamp() + '.json', 'application/json', JSON.stringify(sessionData()));
+    X.toast('Đã lưu phiên làm việc vào file .json trong thư mục Tải xuống.');
+  }
+  function applySession(d) {
+    if (!d || d.app !== 'xep-ong-giay') throw new Error('Đây không phải file phiên của ứng dụng này.');
+    if (d.version > SESSION_VERSION) throw new Error('File phiên được lưu bởi phiên bản mới hơn của ứng dụng.');
+    state.products = (d.products || []).map(function (p) { return Model.newProduct(p); });
+    state.vehicles = (d.vehicles || []).map(function (v) { return Model.newVehicle(v); });
+    state.settings = Object.assign(Model.defaultSettings(), d.settings || {});
+    state.orders = (d.orders || []).map(function (o) { return Model.newOrder(o); });
+    state.depot = Object.assign(Model.defaultDepot(), d.depot || {});
+    state.constraints = d.constraints || [];
+    state.planOpts = Object.assign({ objective: 'vehicles', useVeh: {}, maxCount: {} }, d.planOpts || {});
+    state.plan = d.plan || null;
+    state.savedPlans = d.savedPlans || [];
+    state.result = null; state.picked = null;
+    state.vehId = state.vehicles.length ? state.vehicles[0].id : null;
+    X.save();
+  }
+  function openSession() {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.json,application/json';
+    inp.onchange = function () {
+      const f = inp.files && inp.files[0];
+      if (!f) return;
+      const r = new FileReader();
+      r.onload = function () {
+        try { applySession(JSON.parse(String(r.result))); X.toast('Đã mở phiên "' + f.name + '".'); X.showTab('trips'); }
+        catch (e) { X.toast('Không mở được file: ' + e.message); }
+      };
+      r.readAsText(f);
+    };
+    inp.click();
+  }
+
+  X.exports = { excel: excel, pdf: pdf, tables: tables };
+  X.session = { data: sessionData, apply: applySession };
+  X.onInit = (function (prev) {
+    return function () {
+      if (prev) prev();
+      const nav = document.querySelector('header nav');
+      if (!nav) return;
+      const box = document.createElement('span');
+      box.className = 'sessionbtns';
+      [['Lưu phiên', saveSession], ['Mở phiên', openSession]].forEach(function (b) {
+        const btn = document.createElement('button');
+        btn.className = 'sess'; btn.textContent = b[0]; btn.id = b[0] === 'Lưu phiên' ? 'btnSaveSess' : 'btnOpenSess';
+        btn.addEventListener('click', b[1]); box.appendChild(btn);
+      });
+      nav.parentNode.appendChild(box);
+    };
+  })(X.onInit);
 })();
 
 </script>
