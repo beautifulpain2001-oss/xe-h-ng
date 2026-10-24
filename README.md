@@ -16,14 +16,17 @@ Lần đầu cần mạng để tải Three.js từ CDN (cdnjs, jsdelivr); phầ
 
 Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.html`.
 
-## Thuật toán (GĐ1)
+## Thuật toán
 
 - Đơn vị nội bộ: mm và kg. Giá trị nhập được giữ nguyên, chỉ làm tròn khi hiển thị.
 - Ống đứng trên pallet: thử lưới vuông và lưới lục giác theo hai hướng, chọn cách nhiều ống nhất mỗi lớp; số lớp theo chiều cao tối đa.
 - Ống nằm / hàng rời: mặt cắt ngang xếp lục giác từ dưới lên, có thể nhiều ống nối nhau dọc chiều dài pallet.
-- Xếp lên xe: heuristic extreme points (điểm cực). Mỗi khối thử mọi điểm cực với hai hướng xoay ngang (không lật), chọn vị trí thấp nhất, rồi gần đầu thùng nhất. Thử 5 thứ tự sắp xếp (thể tích, diện tích đáy, chiều cao, khối lượng, thứ tự nhập), giữ kết quả tốt nhất. Chọn extreme points vì xử lý tốt hàng nhiều kích cỡ, dễ thêm ràng buộc (chồng tầng, tải, thứ tự dỡ) và đủ nhanh trong trình duyệt.
-- Ràng buộc đã có: không chồng lấn, trong thùng, tổng tải, số tầng chồng, chỗ đỡ tối thiểu 80% diện tích khi chồng, cảnh báo lệch trọng tâm.
+- Xếp lên xe: heuristic **extreme points** (điểm cực). Mỗi khối thử các điểm cực theo điểm số tăng dần với hai hướng xoay ngang (không lật), lấy vị trí hợp lệ đầu tiên. Chạy nhiều cấu hình: 6 thứ tự sắp xếp × 3 hàm điểm (lấp sàn trước, lấp theo chiều ngang, dựng tường từ đầu thùng) × 2 ưu tiên hướng xoay, chọn phương án chở được nhiều thể tích nhất, trừ điểm khi vi phạm thứ tự dỡ hoặc lệch trọng tâm. Chọn extreme points vì xử lý tốt hàng nhiều kích cỡ, dễ thêm ràng buộc và đủ nhanh trong trình duyệt (chạy trong Web Worker).
+- Ràng buộc cứng: không chồng lấn, nằm gọn trong thùng, tổng tải ≤ tải trọng xe, số tầng chồng, chỗ đỡ ≥ 80% đáy khi chồng, tải chịu nén của từng khối (cộng dồn qua các tầng).
+- Ràng buộc ưu tiên cao: thứ tự dỡ hàng (điểm giao sau xếp sát đầu thùng, điểm giao đầu gần cửa; không để hàng giao sau chặn phía sau hoặc đè lên hàng giao trước) và không đặt khối nặng hơn 1,2 lần lên khối nhẹ. Chỉ nới khi không còn cách xếp nào, và khi nới luôn có cảnh báo đỏ.
+- Trọng tâm: cảnh báo khi lệch ngang quá 10% chiều rộng hoặc lệch dọc quá 15% chiều dài thùng.
+- Khoảng trống còn lại: thử xếp thêm bản sao của từng loại khối vào chỗ trống để ước tính còn chứa thêm bao nhiêu.
 
 ## Giới hạn
 
-Kết quả là phương án gợi ý theo heuristic, không đảm bảo tối ưu tuyệt đối. Ví dụ pallet 1200×1000 trên xe 6200×2350 hiện xếp được 10 trong khi cách chia dải cho 11; sẽ cải thiện ở GĐ2. Khi xếp thật vẫn cần kiểm tra chằng buộc và an toàn.
+Kết quả là phương án gợi ý theo heuristic, không đảm bảo tối ưu tuyệt đối. Lồng ống nhỏ vào ống lớn chưa được tính. Khi xếp thật vẫn cần kiểm tra chằng buộc và an toàn.
