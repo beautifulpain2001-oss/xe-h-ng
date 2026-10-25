@@ -13,6 +13,9 @@ const Planner = (function () {
   const EPS = 1e-6;
 
   const isNum = function (v) { return typeof v === 'number' && isFinite(v); };
+  // Cước một chuyến = cước cố định + cước theo km x quãng đường. Chưa nhập cả hai thì không biết cước (null).
+  const hasCost = function (v) { return !!v && (isNum(v.cost) || isNum(v.costKm)); };
+  const costOf = function (v, km) { return hasCost(v) ? (isNum(v.cost) ? v.cost : 0) + (isNum(v.costKm) ? v.costKm * km : 0) : null; };
   const fkm = function (x) { return x.toLocaleString('vi-VN', { maximumFractionDigits: 1 }) + ' km'; };
   const fpct = function (x) { return x.toLocaleString('vi-VN', { maximumFractionDigits: 0 }) + '%'; };
 
@@ -107,7 +110,7 @@ const Planner = (function () {
     const unassigned = [];
     const bySize = vehicles.slice().sort(function (a, b) { return a.volume - b.volume; });
     const biggest = bySize[bySize.length - 1];
-    const costKnown = vehicles.length > 0 && vehicles.every(function (v) { return isNum(v.cost); });
+    const costKnown = vehicles.length > 0 && vehicles.every(hasCost);
     const cons = input.constraints || [];
     const nameOf = {};
     input.orders.forEach(function (o) { nameOf[o.id] = o.name || o.customer || o.id; });
@@ -248,7 +251,7 @@ const Planner = (function () {
       return n;
     }
     function typeOrder() {
-      if (objective === 'cost' && costKnown) return vehicles.slice().sort(function (a, b) { return a.cost - b.cost || a.volume - b.volume; });
+      if (objective === 'cost' && costKnown) return vehicles.slice().sort(function (a, b) { return costOf(a, 100) - costOf(b, 100) || a.volume - b.volume; });
       return bySize;
     }
 
@@ -270,8 +273,8 @@ const Planner = (function () {
 
     /* --- Điểm số để so sánh phương án theo mục tiêu (nhỏ hơn là tốt hơn) --- */
     function routeCost(r) {
-      if (r.vehicle && isNum(r.vehicle.cost)) return r.vehicle.cost;
-      return 0;
+      const c = r.vehicle ? costOf(r.vehicle, r.dist) : null;
+      return c === null ? 0 : c;
     }
     function scoreOf(routes) {
       const nV = routes.length;
@@ -507,7 +510,7 @@ const Planner = (function () {
         if (r.entities.length === 1 && r.seq.length === 1 && rs.length > 1 && !r.notes.length) notes.push('Đi riêng vì không có điểm giao nào gần hoặc đủ chỗ để ghép chung.');
         return {
           no: k + 1, vehicle: r.vehicle, pack: pack, units: r.units, stops: stops, distanceKm: r.dist,
-          cost: isNum(r.vehicle.cost) ? r.vehicle.cost : null, summary: head, notes: notes, orders: Array.from(new Set([].concat.apply([], r.entities.map(function (e) { return e.members; })))),
+          cost: costOf(r.vehicle, r.dist), summary: head, notes: notes, orders: Array.from(new Set([].concat.apply([], r.entities.map(function (e) { return e.members; })))),
           volumePct: m.volumePct, weightPct: m.weightPct, warnings: pack.warnings.slice(),
         };
       });
@@ -546,7 +549,7 @@ const Planner = (function () {
     });
     return {
       no: 0, vehicle: vehicle, pack: pack, units: us, stops: stops, distanceKm: tourLength(seq, depot, dist),
-      cost: isNum(vehicle.cost) ? vehicle.cost : null, summary: vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng',
+      cost: costOf(vehicle, tourLength(seq, depot, dist)), summary: vehicle.name + ' đầy ' + fpct(m.volumePct) + ' thể tích, ' + fpct(m.weightPct) + ' tải trọng',
       notes: notes || [], orders: Array.from(new Set(us.map(function (u) { return String(u.id).split('|')[0]; }))),
       volumePct: m.volumePct, weightPct: m.weightPct, warnings: pack.warnings.slice(), estimated: flags.estimated,
     };

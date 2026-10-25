@@ -67,6 +67,62 @@ const Geo = (function () {
     'Bà Rịa - Vũng Tàu|ba ria;vung tau|10.35|107.08', 'Tiền Giang|tien giang|10.36|106.36', 'An Giang|an giang|10.37|105.43', 'Cà Mau|ca mau|9.18|105.15',
   ];
 
+
+  // Cấp 3 = xã / phường / khu công nghiệp. Tọa độ xấp xỉ do người viết tổng hợp theo hiểu biết địa lý (sai số khoảng 3 đến 8 km), KHÔNG phải dữ liệu bản đồ chính thức.
+  // Chỉ nhận khi địa chỉ có đúng tên tỉnh ghi ở cột cuối (theo địa giới sau sắp xếp 2025: Bắc Ninh gồm cả Bắc Giang cũ, Hưng Yên gồm Thái Bình cũ, Hải Phòng gồm Hải Dương cũ, Ninh Bình gồm Hà Nam và Nam Định cũ, Phú Thọ gồm Vĩnh Phúc và Hòa Bình cũ).
+  // Mỗi dòng: "tên | các cách viết (không dấu, cách nhau bằng ;) | vĩ độ | kinh độ | tỉnh"
+  const W3 = [
+    // Bắc Ninh (gồm Bắc Giang cũ)
+    'Võ Cường|vo cuong|21.172|106.082|Bắc Ninh', 'Kinh Bắc|kinh bac|21.186|106.074|Bắc Ninh', 'Đại Đồng|dai dong|21.112|106.030|Bắc Ninh', 'Hạp Lĩnh|hap linh|21.105|106.050|Bắc Ninh',
+    'Khắc Niệm|khac niem|21.152|106.060|Bắc Ninh', 'Phong Khê|phong khe|21.165|106.015|Bắc Ninh', 'Nam Sơn|nam son|21.205|106.110|Bắc Ninh', 'Tiên Du|tien du|21.132|106.020|Bắc Ninh',
+    'Từ Sơn|tu son|21.116|105.954|Bắc Ninh', 'Tam Sơn|tam son|21.135|105.975|Bắc Ninh', 'Trang Hạ|trang ha|21.120|105.960|Bắc Ninh', 'Đình Bảng|dinh bang|21.100|105.950|Bắc Ninh',
+    'Tân Chi|tan chi|21.100|105.990|Bắc Ninh', 'Phương Liễu|phuong lieu|21.115|106.140|Bắc Ninh', 'Quế Võ|que vo|21.145|106.170|Bắc Ninh', 'Đào Viên|dao vien|21.180|106.170|Bắc Ninh',
+    'Mão Điền|mao dien|21.052|106.110|Bắc Ninh', 'Trí Quả|tri qua|21.035|106.095|Bắc Ninh', 'Thuận Thành|thuan thanh|21.045|106.075|Bắc Ninh', 'Gia Bình|gia binh|21.058|106.182|Bắc Ninh',
+    'Yên Phong|yen phong|21.205|105.960|Bắc Ninh', 'Yên Trung|yen trung|21.190|105.970|Bắc Ninh', 'Tiền Phong|tien phong|21.190|105.970|Bắc Ninh',
+    'Nếnh|nenh|21.280|106.110|Bắc Ninh', 'Tự Lạn|tu lan|21.260|106.040|Bắc Ninh', 'Tân Dĩnh|tan dinh|21.310|106.170|Bắc Ninh', 'Lạng Giang|lang giang|21.364|106.210|Bắc Ninh',
+    'Đa Mai|da mai|21.270|106.220|Bắc Ninh', 'Bắc Giang|bac giang|21.280|106.190|Bắc Ninh', 'Lục Nam|luc nam|21.275|106.400|Bắc Ninh',
+    // Hưng Yên (gồm Thái Bình cũ)
+    'Như Quỳnh|nhu quynh|20.985|106.055|Hưng Yên', 'Lạc Đạo|lac dao|20.995|106.030|Hưng Yên', 'Đường Hào|duong hao|20.934|106.062|Hưng Yên', 'Thượng Hồng|thuong hong|20.940|106.050|Hưng Yên',
+    'Nguyễn Văn Linh|nguyen van linh|20.940|106.040|Hưng Yên', 'Nghĩa Trụ|nghia tru|20.945|105.985|Hưng Yên', 'Phố Hiến|pho hien|20.646|106.051|Hưng Yên', 'Khoái Châu|khoai chau|20.820|105.970|Hưng Yên',
+    'Xuân Trúc|xuan truc|20.830|106.070|Hưng Yên', 'Hưng Hà|hung ha|20.590|106.200|Hưng Yên', 'Tiền Hải|tien hai|20.406|106.537|Hưng Yên', 'Trần Lãm|tran lam|20.447|106.335|Hưng Yên',
+    // Hà Nội
+    'Gia Lâm|gia lam|21.030|105.960|Hà Nội', 'Thanh Liệt|thanh liet|20.965|105.815|Hà Nội', 'Xuân Phương|xuan phuong|21.030|105.745|Hà Nội', 'Đông Anh|dong anh|21.137|105.848|Hà Nội',
+    'Quang Minh|quang minh|21.190|105.770|Hà Nội', 'Định Công|dinh cong|20.983|105.835|Hà Nội', 'Dương Nội|duong noi|20.978|105.750|Hà Nội', 'Đông Ngạc|dong ngac|21.075|105.785|Hà Nội',
+    'Bồ Đề|bo de|21.045|105.865|Hà Nội', 'Vĩnh Hưng|vinh hung|20.982|105.880|Hà Nội', 'Từ Liêm|tu liem|21.050|105.760|Hà Nội', 'Sơn Tây|son tay|21.136|105.505|Hà Nội',
+    'Thanh Trì|thanh tri|20.937|105.850|Hà Nội', 'Phú Xuyên|phu xuyen|20.726|105.900|Hà Nội', 'Ô Diên|o dien|21.085|105.700|Hà Nội', 'Phú Diễn|phu dien|21.060|105.765|Hà Nội',
+    'Thiên Lộc|thien loc|21.180|105.865|Hà Nội', 'Phúc Lợi|phuc loi|21.060|105.900|Hà Nội', 'Long Biên|long bien|21.045|105.890|Hà Nội', 'Đại Mỗ|dai mo|21.000|105.760|Hà Nội',
+    'Sơn Đồng|son dong|21.070|105.720|Hà Nội', 'Phù Đổng|phu dong|21.000|105.980|Hà Nội', 'Hoài Đức|hoai duc|21.050|105.700|Hà Nội', 'Đan Phượng|dan phuong|21.080|105.670|Hà Nội',
+    'Tiến Thắng|tien thang|21.200|105.760|Hà Nội', 'Phú Thượng|phu thuong|21.090|105.820|Hà Nội', 'Bạch Mai|bach mai|20.999|105.850|Hà Nội', 'Ngọc Hồi|ngoc hoi|20.920|105.845|Hà Nội',
+    'Hoàn Kiếm|hoan kiem|21.029|105.852|Hà Nội', 'Thanh Xuân|thanh xuan|20.993|105.810|Hà Nội', 'Láng|lang|21.020|105.800|Hà Nội', 'Cầu Giấy|cau giay|21.033|105.790|Hà Nội',
+    'Hà Đông|ha dong|20.960|105.770|Hà Nội', 'Ngọc Hà|ngoc ha|21.040|105.835|Hà Nội', 'Giảng Võ|giang vo|21.025|105.820|Hà Nội', 'Kim Liên|kim lien|21.010|105.830|Hà Nội',
+    // Hải Phòng (gồm Hải Dương cũ)
+    'Đông Hải|dong hai|20.830|106.790|Hải Phòng', 'Thạch Khôi|thach khoi|20.900|106.310|Hải Phòng', 'Việt Hòa|viet hoa|20.945|106.285|Hải Phòng', 'Cẩm Giàng|cam giang|20.949|106.206|Hải Phòng',
+    'Kiến An|kien an|20.810|106.630|Hải Phòng', 'Phù Liễn|phu lien|20.805|106.630|Hải Phòng', 'Tứ Minh|tu minh|20.920|106.310|Hải Phòng', 'Nam Sách|nam sach|21.000|106.340|Hải Phòng',
+    'Hồng Bàng|hong bang|20.860|106.680|Hải Phòng',
+    // Ninh Bình (gồm Hà Nam, Nam Định cũ)
+    'Châu Sơn|chau son|20.525|105.940|Ninh Bình', 'Đồng Văn|dong van|20.620|105.930|Ninh Bình', 'Duy Hà|duy ha|20.610|105.940|Ninh Bình', 'Phù Vân|phu van|20.520|105.915|Ninh Bình',
+    'Nam Định|nam dinh|20.420|106.168|Ninh Bình', 'Thành Nam|thanh nam|20.420|106.160|Ninh Bình',
+    // Phú Thọ (gồm Vĩnh Phúc, Hòa Bình cũ)
+    'Bình Xuyên|binh xuyen|21.270|105.690|Phú Thọ', 'Bình Nguyên|binh nguyen|21.270|105.670|Phú Thọ', 'Tam Dương|tam duong|21.370|105.590|Phú Thọ', 'Hy Cương|hy cuong|21.320|105.370|Phú Thọ',
+    // Các tỉnh khác
+    'Sông Công|song cong|21.470|105.830|Thái Nguyên', 'Bách Quang|bach quang|21.470|105.820|Thái Nguyên', 'Đông Tiến|dong tien|19.800|105.750|Thanh Hóa', 'Quang Trung|quang trung|19.800|105.770|Thanh Hóa',
+    'Liên Chiểu|lien chieu|16.090|108.150|Đà Nẵng', 'Điện Bàn Đông|dien ban dong|15.890|108.250|Đà Nẵng', 'Bình Hưng Hòa|binh hung hoa|10.800|106.590|Hồ Chí Minh', 'Bình Thạnh|binh thanh|10.810|106.710|Hồ Chí Minh',
+    'Thới An|thoi an|10.860|106.650|Hồ Chí Minh', 'Đức Hòa Đông|duc hoa dong|10.880|106.440|Long An',
+    // Khu / cụm công nghiệp (đặt nhiều cách viết: KCN, CCN, khu công nghiệp, cụm công nghiệp)
+    'KCN Quế Võ|kcn que vo;khu cong nghiep que vo;kcn que vo 1;kcn que vo i|21.150|106.170|Bắc Ninh', 'KCN Quế Võ III|kcn que vo iii;kcn que vo 3;khu cong nghiep que vo iii;khu cong nghiep que vo 3|21.190|106.190|Bắc Ninh',
+    'KCN Thuận Thành II|kcn thuan thanh ii;kcn thuan thanh 2;khu cong nghiep thuan thanh ii;khu cong nghiep thuan thanh 2|21.060|106.110|Bắc Ninh', 'KCN Thuận Thành III|kcn thuan thanh iii;kcn thuan thanh 3;khu cong nghiep thuan thanh iii|21.070|106.130|Bắc Ninh',
+    'KCN Đại Đồng - Hoàn Sơn|kcn dai dong;khu cong nghiep dai dong;kcn dai dong hoan son;khu cong nghiep dai dong hoan son|21.100|106.030|Bắc Ninh', 'KCN Vân Trung|kcn van trung;khu cong nghiep van trung|21.285|106.075|Bắc Ninh',
+    'KCN Yên Phong|kcn yen phong;khu cong nghiep yen phong;kcn yen phong ii;khu cong nghiep yen phong ii|21.200|105.965|Bắc Ninh', 'KCN Khắc Niệm|kcn khac niem;khu cong nghiep khac niem|21.152|106.060|Bắc Ninh',
+    'KCN Tiên Sơn|kcn tien son;khu cong nghiep tien son|21.114|105.986|Bắc Ninh', 'KCN Quang Châu|kcn quang chau;khu cong nghiep quang chau|21.298|106.108|Bắc Ninh', 'KCN Song Khê - Nội Hoàng|kcn song khe;khu cong nghiep song khe|21.240|106.220|Bắc Ninh',
+    'CCN Non Sáo|ccn non sao;cum cong nghiep non sao|21.310|106.170|Bắc Ninh', 'KCN VSIP Bắc Ninh|vsip bac ninh|21.120|105.965|Bắc Ninh', 'KCN Đình Trám|kcn dinh tram;khu cong nghiep dinh tram|21.330|105.990|Bắc Ninh',
+    'KCN Phố Nối A|kcn pho noi a;khu cong nghiep pho noi a;kcn pho noi;khu cong nghiep pho noi|20.945|106.050|Hưng Yên', 'KCN Dệt may Phố Nối|kcn det may pho noi;khu cong nghiep det may pho noi;kcn det may pho noi b|20.950|106.065|Hưng Yên',
+    'KCN Quang Minh|kcn quang minh;khu cong nghiep quang minh|21.200|105.775|Hà Nội', 'KCN Nam Đình Vũ|kcn nam dinh vu;khu kinh te dinh vu;khu cong nghiep nam dinh vu|20.800|106.810|Hải Phòng',
+    'KCN Đại An|kcn dai an;khu cong nghiep dai an|20.939|106.287|Hải Phòng', 'KCN Cẩm Điền - Lương Điền|kcn cam dien;khu cong nghiep cam dien|20.930|106.210|Hải Phòng',
+    'KCN Châu Sơn|kcn chau son;khu cong nghiep chau son|20.525|105.940|Ninh Bình', 'KCN Đồng Văn II|kcn dong van ii;kcn dong van 2;khu cong nghiep dong van ii|20.610|105.950|Ninh Bình',
+    'KCN Đồng Văn IV|kcn dong van iv;khu cong nghiep dong van iv|20.620|105.970|Ninh Bình', 'KCN Đồng Văn III|kcn dong van iii;khu cong nghiep dong van iii;khu cong nghiep ho tro dong van iii|20.590|105.940|Ninh Bình',
+    'KCN Sông Công II|kcn song cong ii;khu cong nghiep song cong ii|21.470|105.840|Thái Nguyên', 'KCN Tây Bắc Ga|kcn tay bac ga;khu cong nghiep tay bac ga|19.845|105.765|Thanh Hóa',
+    'KCN Hòa Khánh|kcn hoa khanh;khu cong nghiep hoa khanh|16.080|108.140|Đà Nẵng', 'KCN Tân Bình|kcn tan binh;khu cong nghiep tan binh|10.800|106.640|Hồ Chí Minh',
+  ];
   const nz = function (s) {
     return String(s === undefined || s === null ? '' : s).toLowerCase().replace(/đ/g, 'd').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
   };
@@ -78,6 +134,10 @@ const Geo = (function () {
   P1.forEach(function (row) {
     const f = row.split('|');
     f[1].split(';').forEach(function (k) { entries.push({ key: ' ' + nz(k) + ' ', name: f[0], level: 1, lat: +f[2], lng: +f[3], province: f[0] }); });
+  });
+  W3.forEach(function (row) {
+    const f = row.split('|');
+    f[1].split(';').forEach(function (k) { entries.push({ key: ' ' + nz(k) + ' ', name: f[0], level: 3, lat: +f[2], lng: +f[3], province: f[4], need: ' ' + nz(f[4]) + ' ' }); });
   });
   // Khóa dài trước để "thành phố bắc ninh" thắng "bắc ninh".
   entries.sort(function (a, b) { return b.key.length - a.key.length; });
@@ -91,12 +151,13 @@ const Geo = (function () {
     entries.forEach(function (e) {
       const at = t.lastIndexOf(e.key);
       if (at < 0) return;
+      if (e.need && t.indexOf(e.need) < 0) return;
       const score = e.level * 1000 + e.key.length + at / 10000;
       if (!best || score > best.score) best = { score: score, e: e };
     });
     if (!best) return null;
     const e = best.e;
-    return { name: e.level === 2 ? e.name + ', ' + e.province : e.name, province: e.province, lat: e.lat, lng: e.lng, level: e.level };
+    return { name: e.level >= 2 ? e.name + ', ' + e.province : e.name, province: e.province, lat: e.lat, lng: e.lng, level: e.level };
   }
 
   // Danh sách tỉnh/thành (tên + tọa độ trung tâm xấp xỉ) để vẽ làm mốc trên bản đồ offline.

@@ -1,14 +1,14 @@
 /* TAB "GIẢ LẬP CHUYẾN" cho file Kế hoạch giao hàng.
  * Chạy trong cùng trang với ứng dụng chủ nên dùng các biến toàn cục của nó (S, render, save, khFind, xpRows, planOpen, vehs...).
  * Bộ gom đơn và bộ xếp 3D (Model, Solver, Planner, Importer, Geo, View3D) được nhúng nguyên từ dự án xếp ống lên xe. */
-const SIMOBJ = { balanced: 'Cân bằng (gần nhau, ít xe)', vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', stops: 'Ít điểm dừng nhất' };
+const SIMOBJ = { balanced: 'Cân bằng (gần nhau, ít xe)', vehicles: 'Ít xe nhất', distance: 'Ngắn quãng đường nhất', cost: 'Rẻ chi phí nhất (cần nhập cước)', stops: 'Ít điểm dừng nhất' };
 const SIM = { date: '', objective: 'balanced', running: false, res: null, prog: 0, phase: '' };
 let SIMW = null, SIMJOB = null, SIMV = null;
 
 function simCfg() {
   const c = S.cfg.sim = S.cfg.sim || {};
   c.spec = c.spec || {}; c.loc = c.loc || {}; c.off = c.off || {};
-  c.pri = c.pri || {}; c.prod = c.prod || {}; c.cons = c.cons || [];
+  c.pri = c.pri || {}; c.prod = c.prod || {}; c.cons = c.cons || []; c.costType = c.costType || {}; c.place = c.place || {};
   c.trips = c.trips || 1;
   if (c.depot == null) c.depot = 'TP Bắc Ninh';
   c.rf = c.rf > 0 ? c.rf : 1.3;
@@ -37,14 +37,29 @@ function simSpecOf(sku, name) {
   if (g.ok) return { D: g.size * 2, L: g.L, T: g.T || '', kg: g.kg || '', pack: 'loose', stack: true, tiers: 4, guess: g.text, auto: true };
   return { D: '', L: '', T: '', kg: '', pack: 'loose', stack: true, tiers: 4, guess: g.why, auto: true };
 }
+// "1200x1000x150x20x1800" -> {a,b,c,d,e}: dài, rộng, cao (gỗ hoặc kiện), kg bì, cao tối đa cả hàng (không bắt buộc).
+function simParseBox(t) { const n = String(t == null ? '' : t).split(/[x×*;\s]+/).filter(Boolean).map(simNum); return { a: n[0], b: n[1], c: n[2], d: n[3], e: n[4] }; }
 function simProduct(row, idx, spec) {
-  const c = simCfg(), kgMode = simNum(spec.kg) > 0;
-  return Model.newProduct({
+  const c = simCfg(), kgMode = simNum(spec.kg) > 0, bx = simParseBox(spec.box), ok = v => v > 0;
+  const base = {
     id: 'r' + idx, code: row.sku, name: row.name, customer: row.cust, qty: row.qty, unit: 'mm', L: spec.L, sizeMode: 'diameter', size: spec.D,
-    weightMode: kgMode ? 'kg' : 'thickness', T: spec.T, kg: spec.kg, packType: spec.pack === 'loose' ? 'loose' : 'pallet', orient: spec.pack === 'pallet' ? 'stand' : 'lay',
-    stackable: !!spec.stack, maxTiers: Math.max(2, Math.floor(simNum(spec.tiers)) || 2), maxLoad: 1000,
-    palL: c.pal.L, palW: c.pal.W, palH: c.pal.H, palKg: c.pal.kg, maxH: c.pal.maxH,
-  });
+    weightMode: kgMode ? 'kg' : 'thickness', T: spec.T, kg: spec.kg, stackable: !!spec.stack, maxTiers: Math.max(2, Math.floor(simNum(spec.tiers)) || 2), maxLoad: 1000,
+  };
+  if (spec.pack === 'bundle') {
+    // Đóng kiện: cần số ống mỗi kiện và kích thước kiện (dài, rộng, cao, kg bì).
+    return Model.newProduct(Object.assign(base, { packType: 'bundle', orient: 'lay', perUnit: spec.per, bunL: bx.a, bunW: bx.b, bunH: bx.c, bunKg: bx.d || 0 }));
+  }
+  if (spec.pack === 'loose') return Model.newProduct(Object.assign(base, { packType: 'loose', orient: 'lay', palL: c.pal.L, palW: c.pal.W, palH: c.pal.H, palKg: c.pal.kg, maxH: c.pal.maxH }));
+  // Pallet: kích thước pallet riêng của mã này nếu có, không thì lấy mặc định ở "Thiết lập giả lập".
+  const orient = spec.pack === 'pallet' ? 'stand' : 'lay';
+  const pal = { palL: ok(bx.a) ? bx.a : c.pal.L, palW: ok(bx.b) ? bx.b : c.pal.W, palH: bx.c >= 0 ? bx.c : c.pal.H, palKg: bx.d >= 0 ? bx.d : c.pal.kg, maxH: ok(bx.e) ? bx.e : c.pal.maxH };
+  let per = Math.floor(simNum(spec.per));
+  if (!(per >= 1)) {
+    // Chưa biết số ống mỗi pallet: lấy sức chứa tối đa của pallet theo kích thước ống.
+    const li = Solver.layoutInfo({ kind: orient, n: 1, R: simNum(spec.D) / 2, L: simNum(spec.L), baseH: pal.palH, palL: pal.palL, palW: pal.palW, maxH: pal.maxH, palKg: pal.palKg });
+    per = Math.max(1, li && li.cap ? li.cap : 1);
+  }
+  return Model.newProduct(Object.assign(base, pal, { packType: 'pallet', orient: orient, perUnit: per }));
 }
 const simSettings = () => ({ density: 750, gap: 0, looseMaxH: 1000, looseWidth: 1200, roadFactor: simCfg().rf });
 const SIMAN = new Map();
@@ -58,13 +73,24 @@ function simAnalyze(raw) {
 const SIMLL = /^\s*(-?\d+(?:[.,]\d+)?)\s*[,;]\s*(-?\d+(?:[.,]\d+)?)\s*$/;
 function simLocText(t) {
   const m = SIMLL.exec(String(t || ''));
-  if (m) return { lat: simNum(m[1]), lng: simNum(m[2]), name: 'Tọa độ nhập tay', level: 3 };
+  if (m) return { lat: simNum(m[1]), lng: simNum(m[2]), name: 'Tọa độ nhập tay', level: 4 };
   return Geo.locate(t);
+}
+// Địa điểm anh đã nhập tọa độ (xã, phường, khu công nghiệp): khớp khi địa chỉ chứa đủ từng phần của tên (cách nhau dấu phẩy); tên dài hơn được ưu tiên.
+const simAbbr = t => ' ' + Geo.normalize(t).replace(/\bkhu cong nghiep\b/g, 'kcn').replace(/\bcum cong nghiep\b/g, 'ccn').replace(/\bthanh pho\b/g, 'tp') + ' ';
+function simPlaceOf(addr) {
+  const P = simCfg().place; if (!P) return null;
+  const t = simAbbr(addr);
+  let best = null;
+  Object.keys(P).forEach(k => { const parts = String(P[k].name || k).split(',').map(x => simAbbr(x).trim()).filter(Boolean); if (parts.length && parts.every(x => t.indexOf(' ' + x + ' ') >= 0) && (!best || k.length > best.k.length)) best = { k: k, p: P[k] }; });
+  return best ? { lat: best.p.lat, lng: best.p.lng, name: best.p.name } : null;
 }
 function simLocOf(cust, rows) {
   const t = simCfg().loc[cust];
   if (t && String(t).trim()) { const g = simLocText(t); if (g) return Object.assign({ src: 'tay' }, g); }
   const k = khFind(cust, rows, false), addr = (k && k.addr) || '';
+  const pl = simPlaceOf(addr);
+  if (pl) return Object.assign({ src: 'dia diem', addr: addr, level: 4 }, pl);
   const g = Geo.locate(addr);
   if (g) return Object.assign({ src: 'KH', addr: addr }, g);
   return { name: '', addr: addr, level: 0, src: 'none' };
@@ -90,6 +116,11 @@ function simVehSpec(v) {
   if (!(cap > 0)) return null;
   return { L: L, W: W, H: H, payload: cap, est: est || !(+v.cap > 0) };
 }
+function simFleetList() {
+  const list = vehs();
+  if (list.length) return list;
+  return [['2.5 Tấn', 3], ['5 Tấn', 4], ['10 Tấn', 3], ['Cont 40', 2]].flatMap(a => Array.from({ length: a[1] }, (_, i) => ({ id: 'mau-' + a[0] + i, code: '', name: 'Xe mẫu ' + a[0] + ' #' + (i + 1), type: a[0], cap: '' })));
+}
 function simFleet() {
   const c = simCfg(), groups = new Map(), skipped = [];
   let list = vehs();
@@ -105,12 +136,14 @@ function simFleet() {
     const k = [sp.L, sp.W, sp.H, sp.payload].map(Math.round).join('x');
     if (!groups.has(k)) groups.set(k, { sp: sp, trucks: [] });
     groups.get(k).trucks.push(v);
+    const ct = c.costType[String(v.type || '').trim()];
+    if (ct && groups.get(k).cost === undefined) groups.get(k).cost = ct;
   });
   const types = [];
   groups.forEach((g, k) => {
     g.trucks.sort((a, b) => String(a.code || a.name).localeCompare(String(b.code || b.name), 'vi', { numeric: true }));
     types.push({ id: 't' + types.length, name: 'Xe ' + fmtN(g.sp.payload) + ' kg (' + (g.sp.L / 1000).toFixed(1) + '×' + (g.sp.W / 1000).toFixed(2) + '×' + (g.sp.H / 1000).toFixed(2) + ' m)',
-      L: g.sp.L, W: g.sp.W, H: g.sp.H, payload: g.sp.payload, volume: g.sp.L * g.sp.W * g.sp.H / 1e9, cost: null, maxCount: g.trucks.length, trucks: g.trucks.map(v => v.id), est: g.sp.est });
+      L: g.sp.L, W: g.sp.W, H: g.sp.H, payload: g.sp.payload, volume: g.sp.L * g.sp.W * g.sp.H / 1e9, cost: simCostNum(g.cost && g.cost.f), costKm: simCostNum(g.cost && g.cost.k), maxCount: g.trucks.length, trucks: g.trucks.map(v => v.id), est: g.sp.est });
   });
   return { types: types, skipped: skipped };
 }
@@ -152,6 +185,29 @@ function simAllocate(D, rows, pri, nSes) {
     });
   });
   return { alloc: alloc, why: why };
+}
+
+/* ---------- Cước vận chuyển (theo loại xe) ---------- */
+function simCostNum(v) { const n = simNum(v); return v === '' || v == null || !(n >= 0) ? null : n; }
+const simCostOk = () => { const f = simFleet().types; return f.length > 0 && f.every(t => t.cost !== null || t.costKm !== null); };
+const simVnd = v => v === null || v === undefined ? '—' : fmtN(Math.round(v)) + ' đ';
+function simCostSet(type, f, v) {
+  const c = simCfg(), cur = c.costType[type] = c.costType[type] || { f: '', k: '' };
+  cur[f] = String(v).trim() === '' ? '' : Math.max(0, simNum(v));
+  if (cur.f === '' && cur.k === '') delete c.costType[type];
+  save(); render();
+}
+function simCostHtml() {
+  const c = simCfg(), types = Array.from(new Set(simFleetList().map(v => String(v.type || '').trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'vi', { numeric: true }));
+  const n = t => simFleetList().filter(v => String(v.type || '').trim() === t).length;
+  const body = types.map(t => {
+    const ct = c.costType[t] || { f: '', k: '' };
+    const inp = (f, v) => '<input data-t="' + esc(t) + '" value="' + esc(v) + '" placeholder="chưa nhập" style="width:120px;text-align:right" onchange="simCostSet(this.dataset.t,\'' + f + '\',this.value)">';
+    return '<tr><td><b>' + esc(t) + '</b></td><td style="text-align:right">' + n(t) + '</td><td>' + inp('f', ct.f) + ' đ/chuyến</td><td>' + inp('k', ct.k) + ' đ/km</td></tr>';
+  });
+  return '<details class="p"' + (simCostOk() ? '' : '') + '><summary style="cursor:pointer;font-weight:700;color:#1f4a85">Cước vận chuyển (' + (simCostOk() ? 'đã đủ cho mọi loại xe' : 'chưa đủ, mục tiêu "Rẻ chi phí nhất" chưa dùng được') + ')</summary>'
+    + '<div class="hint">Cước một chuyến = cước cố định + cước theo km x quãng đường ước tính. Nhập một trong hai hoặc cả hai cho từng loại xe. Có đủ cước cho mọi loại xe thì chọn được mục tiêu "Rẻ chi phí nhất" và các phương án hiện thêm tổng cước.</div>'
+    + (body.length ? tbl(['Loại xe', 'Số xe', 'Cước cố định', 'Cước theo km'], body) : '<div class="hint">Chưa có xe nào có "Loại xe". Nhập ở Cài đặt → Xe.</div>') + '</details>';
 }
 
 /* ---------- Dựng đầu vào cho bộ gom đơn ---------- */
@@ -346,7 +402,7 @@ async function simCompare() {
   const D = simDate(), b = simBuild(D);
   if (!simCheck(b, D)) return;
   SIM.running = true; SIM.cancel = false; SIM.hist = []; render();
-  const objs = ['balanced', 'vehicles', 'distance', 'stops'], out = [], t0 = performance.now();
+  const objs = simCostOk() ? ['balanced', 'vehicles', 'distance', 'cost', 'stops'] : ['balanced', 'vehicles', 'distance', 'stops'], out = [], t0 = performance.now();
   for (let i = 0; i < objs.length && !SIM.cancel; i++) {
     const r = await simPipeline(b, objs[i], true, simProg(i / objs.length, 1 / objs.length));
     const res = { plan: r.plan, b: b, D: D, stopped: r.stopped, ms: performance.now() - t0, sig: simSig(b) };
@@ -524,7 +580,7 @@ function simTripHtml(R, t, i) {
   return '<div class="box" style="margin:10px 0" ondragover="simOver(event)" ondragleave="simLeave(event)" ondrop="simDrop(event,' + t.no + ')"><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><h3 style="margin:0">Chuyến ' + t.no + '</h3>'
     + (ses ? pill(ses === 'sáng' ? 'Sáng' : 'Chiều', ses === 'sáng' ? 'or' : 'bl') : '')
     + pill(tr ? ((tr.code ? xeCode(tr) + ' · ' : '') + tr.name) : t.vehicle.name, 'bl') + (t.over ? pill('Vượt số xe cùng loại trong buổi', 'rd') : '')
-    + '<span style="color:#5a6b85">đầy ' + fmtN(Math.round(t.volumePct)) + '% thể tích · ' + fmtN(Math.round(t.weightPct)) + '% tải · ' + fmtN(Math.round(t.distanceKm)) + ' km · ' + t.stops.length + ' điểm giao</span>'
+    + '<span style="color:#5a6b85">' + (t.cost !== null && t.cost !== undefined ? simVnd(t.cost) + ' · ' : '') + 'đầy ' + fmtN(Math.round(t.volumePct)) + '% thể tích · ' + fmtN(Math.round(t.weightPct)) + '% tải · ' + fmtN(Math.round(t.distanceKm)) + ' km · ' + t.stops.length + ' điểm giao</span>'
     + '<span style="margin-left:auto"></span>' + vsel + ssel(R.b) + '<button class="btn bl" data-i="' + i + '" onclick="simView3d(+this.dataset.i)">Xem 3D</button> <button class="btn gr" data-i="' + i + '" onclick="simApply(+this.dataset.i)">Gán xe vào kế hoạch</button></div>'
     + tbl(['#', 'Khách', 'Vị trí', 'Hàng', 'Khối lượng', 'Km tới điểm', ''], stops) + note + warn + un + '</div>';
 }
@@ -548,16 +604,16 @@ function simComparePanel() {
   const saved = SIM.saved || [];
   if (!saved.length) return '';
   const best = (k, low) => { const v = saved.map(s => s.res.plan.totals[k]).filter(x => x != null); return v.length ? (low ? Math.min.apply(null, v) : Math.max.apply(null, v)) : null; };
-  const bV = best('vehicles', true), bK = best('distanceKm', true), bS = best('stops', true), bF = best('avgVolumePct', false);
+  const bV = best('vehicles', true), bK = best('distanceKm', true), bC = best('cost', true), bS = best('stops', true), bF = best('avgVolumePct', false);
   const cell = (v, b, t) => '<td style="text-align:right' + (v != null && v === b ? ';background:#e6f6ec;font-weight:700' : '') + '">' + t + '</td>';
   const rows = saved.map((s, i) => {
     const P = s.res.plan, T = P.totals, oc = simOutcomes(s.res), mb = oc.filter(o => o.pri === 'must' && o.state !== 'ok').length;
     return '<tr><td><b>' + esc(s.name) + '</b>' + (P.edited ? '<div style="font-size:11px;color:#5a6b85">đã chỉnh tay</div>' : '') + '</td>'
-      + cell(T.vehicles, bV, fmtN(T.vehicles)) + cell(T.distanceKm, bK, fmtN(Math.round(T.distanceKm)) + ' km') + cell(T.stops, bS, fmtN(T.stops)) + cell(T.avgVolumePct, bF, fmtN(Math.round(T.avgVolumePct)) + '%')
+      + cell(T.vehicles, bV, fmtN(T.vehicles)) + cell(T.distanceKm, bK, fmtN(Math.round(T.distanceKm)) + ' km') + cell(T.cost, bC, simVnd(T.cost)) + cell(T.stops, bS, fmtN(T.stops)) + cell(T.avgVolumePct, bF, fmtN(Math.round(T.avgVolumePct)) + '%')
       + '<td style="text-align:right">' + oc.filter(o => o.state !== 'ok').length + (mb ? ' <span style="color:#b42318">(' + mb + ' bắt buộc)</span>' : '') + '</td>'
       + '<td><button class="btn bl" onclick="simUseSaved(' + i + ')">Dùng phương án này</button> <button class="btn gy" onclick="simDelSaved(' + i + ')">Xóa</button></td></tr>';
   });
-  return '<div class="box" style="margin:8px 0"><h3 style="margin:0 0 6px">So sánh phương án</h3>' + tbl(['Phương án', 'Số chuyến', 'Quãng đường', 'Điểm giao', 'Độ đầy TB', 'Dòng chưa lên xe', ''], rows)
+  return '<div class="box" style="margin:8px 0"><h3 style="margin:0 0 6px">So sánh phương án</h3>' + tbl(['Phương án', 'Số chuyến', 'Quãng đường', 'Cước', 'Điểm giao', 'Độ đầy TB', 'Dòng chưa lên xe', ''], rows)
     + '<div class="hint">Ô nền xanh là giá trị tốt nhất theo từng cột. Mỗi phương án là kết quả heuristic, không phải tối ưu tuyệt đối.</div></div>';
 }
 
@@ -578,7 +634,7 @@ function simResultHtml() {
   const hist = (SIM.hist || []).length;
   return '<section class="p"><h2>Kết quả giả lập ngày ' + fmt(R.D) + ' <span>' + SIMOBJ[P.objective || SIM.objective] + ' · tính trong ' + (R.ms / 1000).toFixed(1) + ' giây' + (P.edited ? ' · đã chỉnh tay' : '') + '</span></h2>'
     + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px">' + card('Số chuyến', T.vehicles, b.rows.length + ' dòng hàng · ' + b.input.orders.length + ' khách')
-    + card('Tổng quãng đường', fmtN(Math.round(T.distanceKm)) + ' km', P.estimatedDistance ? 'có đoạn ước tính' : 'theo vị trí khách') + card('Điểm giao', T.stops, '') + card('Độ đầy thể tích TB', fmtN(Math.round(T.avgVolumePct)) + '%', '')
+    + card('Tổng quãng đường', fmtN(Math.round(T.distanceKm)) + ' km', P.estimatedDistance ? 'có đoạn ước tính' : 'theo vị trí khách') + (T.cost !== null && T.cost !== undefined ? card('Tổng cước', simVnd(T.cost), 'ước tính theo bảng cước') : '') + card('Điểm giao', T.stops, '') + card('Độ đầy thể tích TB', fmtN(Math.round(T.avgVolumePct)) + '%', '')
     + card('Hàng bắt buộc', mustOk + '/' + mustAll.length, mustAll.length ? (mustOk === mustAll.length ? 'đã sắp đủ' : 'còn thiếu') : 'chưa đặt', mustAll.length > mustOk) + '</div>'
     + warn.map(m => '<div style="background:#fff6dd;color:#8a5a00;border-radius:6px;padding:6px 10px;margin:6px 0;font-size:12px">' + esc(m) + '</div>').join('')
     + simOutcomeHtml(R)
@@ -651,8 +707,9 @@ function simSpecHtml(rows) {
       + '<td style="font-size:11px;color:' + (sp.auto ? '#8a5a00' : '#157a3e') + '">' + (sp.auto ? 'Tự đoán: ' + esc(sp.guess || '') : 'Đã sửa tay') + '</td></tr>';
   });
   return '<details class="p"' + (bad ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700;color:#1f4a85">Quy cách hàng (' + skus.size + ' mã' + (bad ? ', <span style="color:#b42318">' + bad + ' mã thiếu kích thước</span>' : '') + ')</summary>'
-    + '<div class="hint">Kích thước được đoán từ tên hàng (ví dụ "ống 38x460x250g" = đường kính ngoài 38, dài 460, nặng 250 g). Cách đóng gói chưa biết nên tạm là hàng rời xếp nằm, cho chồng 4 tầng. Anh sửa lại cho đúng thực tế; đơn vị mm, kg.</div>'
-    + tbl(['Mã hàng', 'Số lượng ống', 'Đk ngoài (mm)', 'Dài (mm)', 'Dày thành (mm)', 'kg/ống', 'Cách đóng gói', 'Chồng tầng', 'Ghi chú'], body) + '</details>';
+    + '<div class="hint">Kích thước được đoán từ tên hàng (ví dụ "ống 38x460x250g" = đường kính ngoài 38, dài 460, nặng 250 g). Cách đóng gói chưa biết nên tạm là hàng rời xếp nằm, cho chồng 4 tầng. Anh sửa lại cho đúng thực tế; đơn vị mm, kg. Có thể sửa hàng loạt bằng Excel: tải file mẫu (đã điền sẵn các mã của ngày này), sửa rồi nhập lại. Chọn "Pallet" mà để trống số ống thì lấy sức chứa tối đa của pallet; chọn "Đóng kiện" thì cần số ống và kích thước kiện.</div>'
+    + '<div style="margin:4px 0"><button class="btn gy" onclick="simSpecTemplate()">⬇ Tải file Excel mẫu</button> <button class="btn bl" onclick="simSpecImport()">⬆ Nhập quy cách từ Excel</button></div>'
+    + tbl(['Mã hàng', 'Số lượng ống', 'Đk ngoài (mm)', 'Dài (mm)', 'Dày thành (mm)', 'kg/ống', 'Cách đóng gói', 'Ống mỗi pallet / kiện', 'Pallet hoặc kiện: dài x rộng x cao x kg bì', 'Chồng tầng', 'Ghi chú'], body) + '</details>';
 }
 
 function simLocHtml(rows) {
@@ -662,12 +719,13 @@ function simLocHtml(rows) {
   const body = Array.from(by.keys()).map(cust => {
     const g = simLocOf(cust, by.get(cust)), t = simCfg().loc[cust] || '';
     if (!g.level) bad++;
-    const lv = g.level === 2 || g.level === 3 ? pill(g.level === 3 ? 'Tọa độ' : 'Quận/huyện', 'gr') : g.level === 1 ? pill('Chỉ tỉnh', 'or') : pill('Chưa rõ', 'rd');
+    const lv = g.level === 4 ? pill('Tọa độ đã nhập', 'gr') : g.level === 3 ? pill('Xã/phường/KCN (xấp xỉ)', 'gr') : g.level === 2 ? pill('Quận/huyện', 'or') : g.level === 1 ? pill('Chỉ tỉnh', 'or') : pill('Chưa rõ', 'rd');
     return '<tr' + (g.level ? '' : ' style="background:#fde8e6"') + '><td><b>' + esc(cust) + '</b></td><td style="font-size:11px">' + esc((g.addr || '').slice(0, 90) || '— (chưa có trong danh sách khách hàng)') + '</td><td>' + esc(g.name || '—') + ' ' + lv + '</td>'
       + '<td><input data-c="' + esc(cust) + '" value="' + esc(t) + '" placeholder="địa chỉ / quận huyện hoặc 21.18,106.07" style="width:240px" onchange="simLocSet(this.dataset.c,this.value)"></td></tr>';
   });
   return '<details class="p"' + (bad ? ' open' : '') + '><summary style="cursor:pointer;font-weight:700;color:#1f4a85">Vị trí khách (' + by.size + ' khách' + (bad ? ', <span style="color:#b42318">' + bad + ' chưa rõ vị trí</span>' : '') + ')</summary>'
-    + '<div class="hint">Vị trí được nhận từ địa chỉ trong danh sách khách hàng, chính xác đến quận/huyện (sai số vài km đến vài chục km). Muốn chính xác hơn, gõ địa chỉ ngắn gọn (ví dụ "Quế Võ, Bắc Ninh") hoặc tọa độ "vĩ độ, kinh độ" vào cột cuối.</div>'
+    + '<div class="hint">Vị trí được nhận từ địa chỉ trong danh sách khách hàng, chính xác đến quận/huyện (sai số vài km đến vài chục km). Muốn chính xác hơn, gõ địa chỉ ngắn gọn (ví dụ "Quế Võ, Bắc Ninh") hoặc tọa độ "vĩ độ, kinh độ" vào cột cuối. Nhiều khách một lần: tải file Excel mẫu, điền địa chỉ ngắn hoặc vĩ độ / kinh độ rồi nhập lại. Địa điểm dùng chung (xã, phường, khu công nghiệp) nhập một lần ở ngay dưới.</div>'
+    + '<div style="margin:4px 0"><button class="btn gy" onclick="simLocTemplate()">⬇ Tải file Excel mẫu</button> <button class="btn bl" onclick="simLocImport()">⬆ Nhập vị trí khách từ Excel</button> <button class="btn gy" onclick="simPlaceTemplate()">⬇ Mẫu địa điểm</button> <button class="btn bl" onclick="simPlaceImport()">⬆ Nhập địa điểm (xã/phường/KCN)</button>' + (Object.keys(simCfg().place || {}).length ? ' <button class="btn gy" onclick="simPlaceClear()">Xóa ' + Object.keys(simCfg().place).length + ' địa điểm đã nhập</button>' : '') + '</div>'
     + tbl(['Khách', 'Địa chỉ trong danh sách', 'Vị trí nhận diện', 'Ghi đè vị trí'], body) + '</details>';
 }
 
@@ -700,9 +758,9 @@ function vSim() {
     + '<div style="display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap">'
     + '<label>Ngày giao<br><input type="date" value="' + esc(D) + '"' + dis + ' onchange="simSet(\'date\',this.value)"></label>'
     + (dates.length ? '<label>Hoặc lịch đã xuất<br><select' + dis + ' onchange="if(this.value)simSet(\'date\',this.value)"><option value="">— chọn —</option>' + dates.map(d => opt(d, 'Kế hoạch ngày ' + fmt(d), D)).join('') + '</select></label>' : '')
-    + '<label>Mục tiêu<br><select' + dis + ' onchange="simSet(\'obj\',this.value)">' + Object.keys(SIMOBJ).map(k => opt(k, SIMOBJ[k], SIM.objective)).join('') + '</select></label>'
+    + '<label>Mục tiêu<br><select' + dis + ' onchange="simSet(\'obj\',this.value)">' + Object.keys(SIMOBJ).filter(k => k !== 'cost' || simCostOk()).map(k => opt(k, SIMOBJ[k], SIM.objective)).join('') + '</select></label>'
     + '<label>Số chuyến mỗi xe / ngày<br><select' + dis + ' onchange="simSet(\'trips\',this.value)">' + opt(1, '1 chuyến', c.trips) + opt(2, '2 chuyến (sáng + chiều)', c.trips) + '</select></label>'
     + '<button class="btn bl"' + dis + ' onclick="simRun()">▶ Chạy giả lập</button><button class="btn gy"' + dis + ' onclick="simCompare()" title="Chạy lần lượt các mục tiêu và đặt cạnh nhau">So sánh các mục tiêu</button></div>'
     + '<div class="hint" style="margin-top:8px">' + (P ? 'Lấy từ Kế hoạch ngày ' + fmt(D) : 'Chưa xuất kế hoạch ngày này, lấy các dòng đang mở theo lịch giao') + ': <b>' + rows.length + ' dòng hàng</b>, ' + new Set(rows.map(r => r.cust)).size + ' khách.</div></section>'
-    + simResultHtml() + simPriSection(rows) + simConsHtml(rows) + simSpecHtml(rows) + simLocHtml(rows) + simVehHtml() + simSettingsHtml();
+    + simResultHtml() + simPriSection(rows) + simConsHtml(rows) + simCostHtml() + simSpecHtml(rows) + simLocHtml(rows) + simVehHtml() + simSettingsHtml();
 }

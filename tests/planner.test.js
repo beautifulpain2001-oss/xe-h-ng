@@ -78,6 +78,14 @@ test('mục tiêu rẻ nhất: tổng cước không lớn hơn phương án ít
   assert.ok(c.totals.cost <= a.totals.cost + 1, 'cước ' + c.totals.cost + ' vs ' + a.totals.cost);
   report.push('         cước: rẻ nhất ' + c.totals.cost.toLocaleString('vi-VN') + ' đ, ít xe nhất ' + a.totals.cost.toLocaleString('vi-VN') + ' đ');
 });
+test('cước gồm cước cố định cộng cước theo km', () => {
+  const vs = [veh('A', 6000, 2400, 2400, 8000, 1000000)], fixed = run(orders8, { objective: 'vehicles' });
+  vs[0].costKm = 10000;
+  const p = Planner.plan({ orders: orders8, vehicles: vs, depot: LOC.depot, settings: { gap: 0, roadFactor: 1.3, objective: 'vehicles', budgetMs: 1500 } });
+  const exp = p.trips.reduce((s, t) => s + 1000000 + 10000 * t.distanceKm, 0);
+  assert.ok(Math.abs(p.totals.cost - exp) < 5, 'cước ' + p.totals.cost + ' vs ' + exp);
+  assert.ok(p.totals.cost > p.trips.length * 1000000);
+});
 test('thứ tự giao là một vòng hợp lý (không dài hơn 110% vòng đảo ngược)', () => {
   const p = run(orders8);
   p.trips.forEach((t) => assert.ok(t.stops.length >= 1 && t.distanceKm > 0));

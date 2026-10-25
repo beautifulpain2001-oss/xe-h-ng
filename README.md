@@ -63,6 +63,12 @@ Sau khi sửa trong `src/`, chạy `node build.js` để cập nhật `index.htm
 - Mục tiêu "Cân bằng": thêm một xe tương đương đi thêm 120 km, nên ghép khách gần nhau mà không ghép khách xa nhau chỉ để bớt một xe.
 - Kết quả: các chuyến, khách đi chung, xe gợi ý (theo thứ tự mã xe, 1 hoặc 2 chuyến sáng/chiều mỗi xe), xếp 3D; nút "Gán xe vào kế hoạch" ghi xe và buổi vào các dòng của kế hoạch.
 
+### Nâng cấp: vị trí, quy cách, cước (tab Giả lập chuyến)
+- **Vị trí khách** có 4 mức: tỉnh, quận/huyện, xã/phường/KCN (bảng có sẵn trong `src/geo.js`, sai số ước tính 3-8 km), và tọa độ nhập tay. Nhập tay theo từng khách, hoặc nhập theo địa điểm (một dòng áp cho mọi khách có địa chỉ chứa tên đó). Có file Excel mẫu cho cả hai.
+- **Quy cách hàng**: kiểu đóng gói (rời, pallet đứng/nằm, kiện), số ống mỗi pallet/kiện (để trống thì tự tính), kích thước và kg bì pallet/kiện. Nhập và xuất qua Excel (`src/simimport.js`).
+- **Cước**: cước cố định + cước theo km cho từng loại xe; có đủ cho mọi loại xe thì chọn được mục tiêu "Rẻ chi phí nhất"; tổng cước hiện ở thẻ, bảng so sánh và file xuất.
+- Chưa có đường đi thật: cần dữ liệu bản đồ đường bộ (OSM) mà môi trường dựng không tải được, nên khoảng cách vẫn là ma trận km nhập tay hoặc ước tính theo tọa độ.
+
 ## Hiệu năng (đo bằng Node, một luồng; trình duyệt tương đương)
 
 - Xếp một xe: 300 khối trộn dưới 5 giây.

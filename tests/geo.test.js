@@ -11,7 +11,7 @@ const km = (a, b) => { const R = 6371, r = Math.PI / 180, dl = (b.lat - a.lat) *
 
 test('nhận ra quận/huyện ưu tiên hơn tỉnh', () => {
   const g = Geo.locate('Thôn Yên Nho, Gia Đông, Thuận Thành, Bắc Ninh');
-  assert.strictEqual(g.name, 'Thuận Thành, Bắc Ninh'); assert.strictEqual(g.level, 2);
+  assert.strictEqual(g.name, 'Thuận Thành, Bắc Ninh'); assert.ok(g.level >= 2);
 });
 test('không dấu, viết hoa/thường, viết tắt đều nhận', () => {
   assert.strictEqual(Geo.locate('KCN DAI AN - HAI DUONG').province, 'Hải Dương');
@@ -20,6 +20,11 @@ test('không dấu, viết hoa/thường, viết tắt đều nhận', () => {
 test('"Thành phố Bắc Ninh" là thành phố, "Tỉnh Bắc Ninh" chỉ là tỉnh', () => {
   assert.strictEqual(Geo.locate('Phường X, Thành phố Bắc Ninh').level, 2);
   assert.strictEqual(Geo.locate('Xã lạ, Tỉnh Bắc Ninh').level, 1);
+});
+test('khu công nghiệp / phường nhận ở mức xã-phường (cấp 3), chỉ khi đúng tỉnh', () => {
+  const g = Geo.locate('KCN Quế Võ III, Bắc Ninh');
+  assert.strictEqual(g.level, 3); assert.strictEqual(g.name, 'KCN Quế Võ III, Bắc Ninh');
+  assert.ok(km(g, Geo.locate('KCN Quế Võ III, Hải Phòng')) > 20 || Geo.locate('KCN Quế Võ III, Hải Phòng').level < 3);
 });
 test('địa chỉ trống hoặc không nhận ra trả null', () => {
   assert.strictEqual(Geo.locate(''), null);
